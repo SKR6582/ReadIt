@@ -3,7 +3,7 @@ import ApplicationServices
 import ServiceManagement
 
 @main
-struct LiveCaptionMain {
+struct ReadItMain {
     @MainActor
     static func main() {
         let app = NSApplication.shared
@@ -22,15 +22,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pipeline: Task<Void, Never>?
     private var retryTimer: Timer?
 
-    private let hotkeyStateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let screenStateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let permissionWarningItem = NSMenuItem(title: "화면 기록 권한 필요 (설정 열기…)", action: #selector(openPermissionSettings), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "로그인 시 자동 실행", action: nil, keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
-        hotkey.onTrigger = { [weak self] in self?.triggerTranslation() }
+        hotkey.onTrigger = { [weak self] mode in self?.triggerTranslation(mode: mode) }
         requestPermissionsIfNeeded()
         startHotkey()
+        TextRecognizer.warmUp()
+
+        // 시작 후 백그라운드에서 업데이트 확인
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            GitHubUpdater.shared.checkForUpdates(isUserInitiated: false)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -46,24 +51,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
-        // 1. 번역 실행
-        let translateItem = NSMenuItem(title: "화면 실시간 번역", action: #selector(menuTranslate), keyEquivalent: "t")
-        translateItem.keyEquivalentModifierMask = [.control, .option]
+        // 1. 권한 경고 (평소에는 숨김, 권한 없을 때만 상단에 표시)
+        permissionWarningItem.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+        permissionWarningItem.target = self
+        menu.addItem(permissionWarningItem)
+
+        // 2. 번역 실행 (기본 ⌥1, 세로쓰기 ⌥2)
+        let translateItem = NSMenuItem(title: "화면 바로 번역", action: #selector(menuTranslate), keyEquivalent: "1")
+        translateItem.keyEquivalentModifierMask = [.option]
         translateItem.image = NSImage(systemSymbolName: "translate", accessibilityDescription: "번역")
         translateItem.target = self
         menu.addItem(translateItem)
-        menu.addItem(.separator())
 
-        // 2. 단축키 및 권한 상태 표시
-        hotkeyStateItem.isEnabled = false
-        screenStateItem.isEnabled = false
-        menu.addItem(hotkeyStateItem)
-        menu.addItem(screenStateItem)
-
-        let permissionItem = NSMenuItem(title: "화면 기록 권한 설정 열기…", action: #selector(openPermissionSettings), keyEquivalent: "")
-        permissionItem.image = NSImage(systemSymbolName: "lock.shield", accessibilityDescription: nil)
-        permissionItem.target = self
-        menu.addItem(permissionItem)
+        let verticalTranslateItem = NSMenuItem(title: "일본어 세로쓰기 번역", action: #selector(menuVerticalTranslate), keyEquivalent: "2")
+        verticalTranslateItem.keyEquivalentModifierMask = [.option]
+        verticalTranslateItem.image = NSImage(systemSymbolName: "character.textbox", accessibilityDescription: "세로 번역")
+        verticalTranslateItem.target = self
+        menu.addItem(verticalTranslateItem)
         menu.addItem(.separator())
 
         // 3. 언어 팩 및 기본 환경설정
@@ -77,10 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loginItem.target = self
         loginItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
         menu.addItem(loginItem)
+
+        let updateItem = NSMenuItem(title: "업데이트 확인…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.image = NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: nil)
+        updateItem.target = self
+        menu.addItem(updateItem)
         menu.addItem(.separator())
 
         // 4. 앱 종료
-        let quitItem = NSMenuItem(title: "LiveCaption 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "ReadIt 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
         quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
         menu.addItem(quitItem)
@@ -94,30 +103,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func refreshMenuState() {
-        hotkeyStateItem.title = hotkey.isRunning
-            ? "단축키: ⌃⌥T 또는 ⌥1"
-            : "단축키 등록 실패"
-        hotkeyStateItem.image = NSImage(
-            systemSymbolName: hotkey.isRunning ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-            accessibilityDescription: nil
-        )
-
         let screenAccess = CGPreflightScreenCaptureAccess()
-        screenStateItem.title = screenAccess
-            ? "화면 기록 권한 허용됨"
-            : "화면 기록 권한 필요"
-        screenStateItem.image = NSImage(
-            systemSymbolName: screenAccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-            accessibilityDescription: nil
-        )
+        permissionWarningItem.isHidden = screenAccess
 
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         updateStatusIcon()
     }
 
     private func updateStatusIcon() {
-        let symbol = hotkey.isRunning ? "translate" : "exclamationmark.triangle"
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "LiveCaption")
+        let hasPermission = CGPreflightScreenCaptureAccess()
+        let symbol = (!hasPermission || !hotkey.isRunning) ? "exclamationmark.triangle" : "translate"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "ReadIt")
         image?.isTemplate = true
         statusItem?.button?.image = image
     }
@@ -125,7 +121,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuTranslate() {
         // 메뉴가 닫힌 뒤에 캡처해야 메뉴 UI가 스크린샷에 찍히지 않는다
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            MainActor.assumeIsolated { self?.triggerTranslation() }
+            MainActor.assumeIsolated { self?.triggerTranslation(mode: .standard) }
+        }
+    }
+
+    @objc private func menuVerticalTranslate() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            MainActor.assumeIsolated { self?.triggerTranslation(mode: .vertical) }
         }
     }
 
@@ -149,6 +151,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showAlert(title: "로그인 항목 설정 실패", message: error.localizedDescription)
         }
         refreshMenuState()
+    }
+
+    @objc private func checkForUpdates() {
+        GitHubUpdater.shared.checkForUpdates(isUserInitiated: true)
     }
 
     // MARK: - Permissions
@@ -175,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Pipeline: 캡처 → OCR → 문단 묶기 → 색 추출 → 번역
 
-    func triggerTranslation() {
+    func triggerTranslation(mode: TranslationMode = .standard) {
         // 오버레이가 이미 떠 있으면 토글하여 닫기
         if let overlay {
             overlay.dismiss()
@@ -184,17 +190,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         guard CGPreflightScreenCaptureAccess() else {
             CGRequestScreenCaptureAccess()
-            showAlert(title: "화면 기록 권한이 필요합니다", message: LiveCaptionError.screenPermissionDenied.localizedDescription)
+            showAlert(title: "화면 기록 권한이 필요합니다", message: ReadItError.screenPermissionDenied.localizedDescription)
             return
         }
 
         pipeline?.cancel()
         pipeline = Task { [weak self] in
-            await self?.runPipeline()
+            await self?.runPipeline(mode: mode)
         }
     }
 
-    private func runPipeline() async {
+    private func runPipeline(mode: TranslationMode) async {
         let capture: CapturedScreen
         do {
             capture = try await ScreenCapturer.captureScreenUnderMouse()
@@ -233,13 +239,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
 
-            // 한국어가 아니면서, 사용자가 설정에서 활성화한 언어의 블록만 번역 파이프라인으로 전달
-            let blocks = BlockBuilder.build(from: lines).filter { block in
+            // 모드에 따라 블록 생성 (vertical 모드는 세로쓰기 문단만 집중 번역)
+            let isVerticalOnly = (mode == .vertical)
+            let blocks = BlockBuilder.build(from: lines, verticalOnly: isVerticalOnly).filter { block in
                 guard let lang = block.language else { return false }
                 guard lang != .korean else { return false }
                 guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
                 return AppSettings.shared.isEnabled(code)
             }
+
             let image = capture.image
             let scale = model.scale
             let overlayBlocks = await Task.detached(priority: .userInitiated) {

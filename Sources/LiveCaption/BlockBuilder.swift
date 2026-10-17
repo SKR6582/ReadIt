@@ -9,6 +9,8 @@ struct TextBlock {
     let rect: CGRect
     let text: String
     var language: NLLanguage?
+    /// 세로쓰기 문단(열이 오른쪽에서 왼쪽으로 진행)
+    let isVertical: Bool
 }
 
 enum BlockBuilder {
@@ -26,8 +28,30 @@ enum BlockBuilder {
 
     // MARK: - Grouping
 
+    /// 인식된 줄을 문단 블록으로 묶는다.
+    /// - Parameter verticalOnly: true 면 세로쓰기 문단만 만든다 (만화 등에서 가로 UI 텍스트 제외)
     @MainActor
-    static func build(from lines: [RecognizedLine]) -> [TextBlock] {
+    static func build(from lines: [RecognizedLine], verticalOnly: Bool = false) -> [TextBlock] {
+        let horizontalGroups = verticalOnly ? [] : groupHorizontal(lines.filter { !$0.isVertical })
+        let verticalGroups = groupVertical(lines.filter(\.isVertical))
+
+        var blocks: [TextBlock] = []
+        for group in horizontalGroups {
+            blocks.append(makeBlock(id: blocks.count, lines: group, isVertical: false))
+        }
+        for group in verticalGroups {
+            blocks.append(makeBlock(id: blocks.count, lines: group, isVertical: true))
+        }
+        detectLanguages(&blocks)
+        return blocks
+    }
+
+    private static func makeBlock(id: Int, lines: [RecognizedLine], isVertical: Bool) -> TextBlock {
+        let rect = lines.dropFirst().reduce(lines[0].rect) { $0.union($1.rect) }
+        return TextBlock(id: id, lines: lines, rect: rect, text: join(lines), language: nil, isVertical: isVertical)
+    }
+
+    private static func groupHorizontal(_ lines: [RecognizedLine]) -> [[RecognizedLine]] {
         let sorted = lines.sorted {
             abs($0.rect.minY - $1.rect.minY) < 2 ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
         }
@@ -52,13 +76,56 @@ enum BlockBuilder {
                 groups.append([line])
             }
         }
+        return groups
+    }
 
-        var blocks = groups.enumerated().map { index, lines in
-            let rect = lines.dropFirst().reduce(lines[0].rect) { $0.union($1.rect) }
-            return TextBlock(id: index, lines: lines, rect: rect, text: join(lines), language: nil)
+    /// 세로쓰기 열을 오른쪽에서 왼쪽 순서로 훑으며 인접한 열을 한 문단으로 합친다.
+    private static func groupVertical(_ lines: [RecognizedLine]) -> [[RecognizedLine]] {
+        let sorted = lines.sorted {
+            abs($0.rect.maxX - $1.rect.maxX) < 2 ? $0.rect.minY < $1.rect.minY : $0.rect.maxX > $1.rect.maxX
         }
-        detectLanguages(&blocks)
-        return blocks
+
+        var groups: [[RecognizedLine]] = []
+        for line in sorted {
+            var mergedIndex: Int?
+            for index in groups.indices.reversed() {
+                guard let last = groups[index].last else { continue }
+                // 너무 오른쪽에 있는 블록은 더 볼 필요 없음
+                if last.rect.minX - line.rect.maxX > last.rect.width * 2 { continue }
+                let blockHeight = groups[index].map(\.rect.height).max() ?? last.rect.height
+                if canMergeVertical(last, line, blockHeight: blockHeight) {
+                    mergedIndex = index
+                    break
+                }
+            }
+            if let mergedIndex {
+                groups[mergedIndex].append(line)
+            } else {
+                groups.append([line])
+            }
+        }
+        return groups
+    }
+
+    /// a = 오른쪽(앞) 열, b = 그 왼쪽에 오는 후보 열
+    private static func canMergeVertical(_ a: RecognizedLine, _ b: RecognizedLine, blockHeight: CGFloat) -> Bool {
+        // 열 폭 = 글자 크기. 크기가 비슷해야 같은 문단
+        let wMax = max(a.rect.width, b.rect.width)
+        let wMin = max(1, min(a.rect.width, b.rect.width))
+        guard wMax / wMin < 1.35 else { return false }
+
+        // 열 사이 간격 (행간 1.0~2.0 조판까지 허용)
+        let gap = a.rect.minX - b.rect.maxX
+        guard gap > -0.3 * wMax, gap < 1.1 * wMax else { return false }
+
+        // 위쪽 정렬(소설/본문) 또는 가운데 정렬(말풍선)
+        let topAligned = abs(a.rect.minY - b.rect.minY) < 1.5 * wMax
+        let centerAligned = abs(a.rect.midY - b.rect.midY) < 1.5 * wMax
+        guard topAligned || centerAligned else { return false }
+
+        // 앞 열이 너무 짧으면 문단이 끝난 것으로 본다
+        guard a.rect.height >= 0.45 * max(blockHeight, b.rect.height) else { return false }
+        return true
     }
 
     private static func canMerge(_ a: RecognizedLine, _ b: RecognizedLine, blockWidth: CGFloat) -> Bool {
@@ -100,7 +167,8 @@ enum BlockBuilder {
 
     private static func isCJK(_ c: Character) -> Bool {
         guard let v = c.unicodeScalars.first?.value else { return false }
-        return (0x3040...0x30FF).contains(v) || (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v)
+        return (0x3000...0x30FF).contains(v) || (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v)
+            || (0xFF00...0xFFEF).contains(v)
     }
 
     // MARK: - Language detection (사용자 설정 언어 제약 조건 적용)

@@ -6,8 +6,8 @@ import NaturalLanguage
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    private let userDefaultsKey = "LiveCaption_EnabledLanguages"
-    private let menuBarKey = "LiveCaption_IncludeMenuBar"
+    private let userDefaultsKey = "ReadIt_EnabledLanguages"
+    private let menuBarKey = "ReadIt_IncludeMenuBar"
 
     /// 기본적으로 자주 쓰이는 언어 (영어, 일본어, 중국어 간체, 중국어 번체)
     static let defaultEnabledCodes: Set<String> = [

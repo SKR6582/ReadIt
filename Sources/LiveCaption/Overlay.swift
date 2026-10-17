@@ -12,6 +12,7 @@ struct OverlayBlock: Identifiable {
     let lineCount: Int
     let background: NSColor
     let foreground: NSColor
+    let isVertical: Bool
 }
 
 @MainActor

@@ -24,17 +24,25 @@ enum ColorSampler {
                 height: block.rect.height * scale
             )
             let (background, foreground) = colors(for: pixelRect, in: image)
-            let lineHeight = block.lines.map(\.rect.height).reduce(0, +) / CGFloat(max(1, block.lines.count))
+            let baseSize: CGFloat
+            if block.isVertical {
+                let colWidth = block.lines.map(\.rect.width).reduce(0, +) / CGFloat(max(1, block.lines.count))
+                baseSize = max(9, colWidth * 0.95)
+            } else {
+                let lineHeight = block.lines.map(\.rect.height).reduce(0, +) / CGFloat(max(1, block.lines.count))
+                baseSize = max(9, lineHeight * 0.8)
+            }
             return OverlayBlock(
                 id: block.id,
                 rect: block.rect,
                 sourceText: block.text,
                 sourceLanguage: language.rawValue,
                 translated: nil,
-                fontSize: max(9, lineHeight * 0.8),
+                fontSize: baseSize,
                 lineCount: block.lines.count,
                 background: background,
-                foreground: foreground
+                foreground: foreground,
+                isVertical: block.isVertical
             )
         }
     }

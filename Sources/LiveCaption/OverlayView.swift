@@ -348,15 +348,28 @@ private struct NativeBlockView: View {
             if let translated = block.translated {
                 // 1) 정상 번역 완료된 블록
                 ZStack(alignment: .topTrailing) {
-                    Text(translated)
-                        .font(.system(size: block.fontSize, weight: .medium, design: .default))
-                        .foregroundStyle(Color(nsColor: block.foreground))
-                        .lineLimit(block.lineCount == 1 ? 1 : nil)
-                        .minimumScaleFactor(0.35)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, pad)
-                        .frame(width: width, height: height, alignment: .leading)
-                        .background(
+                    Group {
+                        if block.isVertical {
+                            VerticalTextView(
+                                text: translated,
+                                maxFontSize: block.fontSize,
+                                color: Color(nsColor: block.foreground),
+                                size: CGSize(width: block.rect.width, height: block.rect.height)
+                            )
+                            .padding(.horizontal, pad)
+                            .padding(.vertical, pad)
+                        } else {
+                            Text(translated)
+                                .font(.system(size: block.fontSize, weight: .medium, design: .default))
+                                .foregroundStyle(Color(nsColor: block.foreground))
+                                .lineLimit(block.lineCount == 1 ? 1 : nil)
+                                .minimumScaleFactor(0.35)
+                                .multilineTextAlignment(.leading)
+                                .padding(.horizontal, pad)
+                        }
+                    }
+                    .frame(width: width, height: height, alignment: block.isVertical ? .topTrailing : .leading)
+                    .background(
                             RoundedRectangle(cornerRadius: min(5, pad * 1.5), style: .continuous)
                                 .fill(Color(nsColor: block.background))
                                 .shadow(
@@ -390,6 +403,8 @@ private struct NativeBlockView: View {
                         .onTapGesture(perform: onCopy)
                     }
                 }
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onCopy)
                 .help("원문: \(block.sourceText)")
                 .onHover(perform: onHover)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))

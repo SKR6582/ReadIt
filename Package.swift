@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "LiveCaption",
+    name: "ReadIt",
     platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(
-            name: "LiveCaption",
+            name: "ReadIt",
             path: "Sources/LiveCaption"
         )
     ]

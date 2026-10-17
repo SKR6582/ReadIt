@@ -5,15 +5,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>ko</string>
 	<key>CFBundleDisplayName</key>
-	<string>LiveCaption</string>
+	<string>ReadIt</string>
 	<key>CFBundleExecutable</key>
-	<string>LiveCaption</string>
+	<string>ReadIt</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.seungjun.livecaption</string>
+	<string>com.seungjun.readit</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>LiveCaption</string>
+	<string>ReadIt</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
