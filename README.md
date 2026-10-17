@@ -1,9 +1,11 @@
+
 # ReadIt — macOS 화면 바로 번역
 
 **⌥ + 1** (또는 **⌃ + ⌥ + T**)를 누르면 마우스 커서가 위치한 화면을 캡처하여 글자를 인식한 뒤, **원래 글자 자리에 한국어 번역을 덮어서** 표시합니다. 만화·웹소설 등 세로 글줄은 **⌥ + 2**로 세로쓰기 번역을 지원합니다.
 
 모든 처리가 Mac 기기 내 신경망에서 완결되므로(Apple Vision OCR + Apple Translation) **무료이며, API 키가 필요 없고, 인터넷 연결 없이도 오프라인으로 동작합니다.**
 
+<img width="1464" height="950" alt="image" src="https://github.com/user-attachments/assets/e51113ee-ec28-4015-b860-9a2a1c3a75b4" />
 ---
 
 ## 주요 기능
