@@ -24,8 +24,12 @@ struct OverlayView: View {
     var onDismiss: () -> Void
     var onOpenLanguagePacks: ([Locale.Language]) -> Void
 
-    @State private var hoveredBlockId: Int?
+    @State private var hoverStack: [Int] = []
+    @State private var blockZIndex: [Int: Double] = [:]
+    @State private var topZIndex: Double = 1
     @State private var copiedBlockFeedbackId: Int?
+
+    private var hoveredBlockId: Int? { hoverStack.last }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -47,12 +51,17 @@ struct OverlayView: View {
             // 4. 번역된 텍스트 블록들 (정상 번역은 원문색 덮기, 언어팩 없는 블록은 붉은색 하이라이트)
             if !model.showOriginal {
                 ForEach(model.blocks) { block in
+                    let isHovered = hoveredBlockId == block.id
+                    let isCopied = copiedBlockFeedbackId == block.id
+                    let baseZ = blockZIndex[block.id] ?? 0
+                    let effectiveZ = isHovered ? (topZIndex + 1000) : (isCopied ? (topZIndex + 500) : baseZ)
+
                     NativeBlockView(
                         block: block,
-                        isHovered: hoveredBlockId == block.id,
-                        isCopied: copiedBlockFeedbackId == block.id,
+                        isHovered: isHovered,
+                        isCopied: isCopied,
                         onHover: { hovering in
-                            hoveredBlockId = hovering ? block.id : nil
+                            updateHover(blockId: block.id, hovering: hovering)
                         },
                         onCopy: {
                             copySingleBlock(block)
@@ -61,6 +70,7 @@ struct OverlayView: View {
                             onOpenLanguagePacks([Locale.Language(identifier: block.sourceLanguage)])
                         }
                     )
+                    .zIndex(effectiveZ)
                 }
             }
 
@@ -68,11 +78,27 @@ struct OverlayView: View {
             floatingControlBar
                 .frame(width: model.canvasSize.width)
                 .padding(.top, 40)
+                .zIndex(1_000_000)
         }
         .frame(width: model.canvasSize.width, height: model.canvasSize.height, alignment: .topLeading)
         .contentShape(Rectangle())
         .onTapGesture(perform: onDismiss)
         .ignoresSafeArea()
+    }
+
+    private func updateHover(blockId: Int, hovering: Bool) {
+        if hovering {
+            hoverStack.removeAll { $0 == blockId }
+            hoverStack.append(blockId)
+            topZIndex += 1
+            blockZIndex[blockId] = topZIndex
+        } else {
+            hoverStack.removeAll { $0 == blockId }
+            if let currentId = hoverStack.last {
+                topZIndex += 1
+                blockZIndex[currentId] = topZIndex
+            }
+        }
     }
 
     // MARK: - Floating Control Bar (macOS Native Capsule HUD)
