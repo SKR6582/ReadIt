@@ -37,7 +37,7 @@ final class GitHubUpdater {
     }
 
     var currentVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.1"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.2"
     }
 
     func checkForUpdates(isUserInitiated: Bool) {
