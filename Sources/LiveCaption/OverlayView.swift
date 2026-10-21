@@ -385,13 +385,14 @@ private struct NativeBlockView: View {
                             .padding(.horizontal, pad)
                             .padding(.vertical, pad)
                         } else {
-                            Text(translated)
-                                .font(.system(size: block.fontSize, weight: .medium, design: .default))
-                                .foregroundStyle(Color(nsColor: block.foreground))
-                                .lineLimit(block.lineCount == 1 ? 1 : nil)
-                                .minimumScaleFactor(0.35)
-                                .multilineTextAlignment(.leading)
-                                .padding(.horizontal, pad)
+                            AdaptiveTextView(
+                                text: translated,
+                                baseFontSize: block.fontSize,
+                                foreground: Color(nsColor: block.foreground),
+                                width: block.rect.width,
+                                height: block.rect.height
+                            )
+                            .padding(.horizontal, pad)
                         }
                     }
                     .frame(width: width, height: height, alignment: block.isVertical ? .topTrailing : .leading)
@@ -474,6 +475,67 @@ private struct NativeBlockView: View {
             }
         }
         .position(x: block.rect.midX, y: block.rect.midY)
+    }
+}
+
+// MARK: - Adaptive Text View (번역문 길이에 맞춰 폰트 크기 자동 축소)
+
+private struct AdaptiveTextView: View {
+    let text: String
+    let baseFontSize: CGFloat
+    let foreground: Color
+    let width: CGFloat
+    let height: CGFloat
+
+    private var calculatedFontSize: CGFloat {
+        let minFontSize: CGFloat = 6.0
+        guard width > 2, height > 2 else { return minFontSize }
+
+        let targetWidth = max(4, width)
+        let targetHeight = max(4, height)
+
+        func fits(at size: CGFloat) -> Bool {
+            let font = NSFont.systemFont(ofSize: size, weight: .medium)
+            let attrString = NSAttributedString(
+                string: text,
+                attributes: [.font: font]
+            )
+            let constraintSize = CGSize(width: targetWidth, height: .greatestFiniteMagnitude)
+            let bounding = attrString.boundingRect(
+                with: constraintSize,
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            )
+            return bounding.height <= targetHeight + 1.0
+        }
+
+        if fits(at: baseFontSize) {
+            return baseFontSize
+        }
+
+        var lo = minFontSize
+        var hi = baseFontSize
+        for _ in 0..<12 {
+            let mid = (lo + hi) / 2
+            if fits(at: mid) {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+        return lo
+    }
+
+    var body: some View {
+        let fontSize = calculatedFontSize
+        Text(text)
+            .font(.system(size: fontSize, weight: .medium, design: .default))
+            .foregroundStyle(foreground)
+            .multilineTextAlignment(.leading)
+            .lineLimit(nil)
+            .minimumScaleFactor(0.4)
+            .frame(maxWidth: width, maxHeight: height, alignment: .topLeading)
+            .clipped()
     }
 }
 
