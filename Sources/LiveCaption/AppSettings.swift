@@ -1,6 +1,20 @@
 import Foundation
 import NaturalLanguage
 
+enum OverlayHUDStyle: String, CaseIterable, Identifiable {
+    case floating = "floating"
+    case notch = "notch"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .floating: return "플로팅 캡슐 (기본)"
+        case .notch: return "노치 통합 HUD"
+        }
+    }
+}
+
 /// 사용자가 번역 대상으로 활성화한 언어 및 부가 옵션 설정 관리자 (UserDefaults 연동).
 @MainActor
 final class AppSettings: ObservableObject {
@@ -8,6 +22,7 @@ final class AppSettings: ObservableObject {
 
     private let userDefaultsKey = "ReadIt_EnabledLanguages"
     private let menuBarKey = "ReadIt_IncludeMenuBar"
+    private let hudStyleKey = "ReadIt_OverlayHUDStyle"
 
     /// 기본적으로 자주 쓰이는 언어 (영어, 일본어, 중국어 간체, 중국어 번체)
     static let defaultEnabledCodes: Set<String> = [
@@ -27,6 +42,13 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// 오버레이 상단 컨트롤 UI 스타일 (플로팅 캡슐 vs 노치 통합 HUD)
+    @Published var hudStyle: OverlayHUDStyle {
+        didSet {
+            UserDefaults.standard.set(hudStyle.rawValue, forKey: hudStyleKey)
+        }
+    }
+
     private init() {
         if let saved = UserDefaults.standard.array(forKey: userDefaultsKey) as? [String] {
             self.enabledCodes = Set(saved)
@@ -41,6 +63,15 @@ final class AppSettings: ObservableObject {
             // 기본값은 메뉴 막대 제외 (false)
             self.includeMenuBar = false
             UserDefaults.standard.set(false, forKey: menuBarKey)
+        }
+
+        if let rawStyle = UserDefaults.standard.string(forKey: hudStyleKey),
+           let savedStyle = OverlayHUDStyle(rawValue: rawStyle) {
+            self.hudStyle = savedStyle
+        } else {
+            // 노치 통합 UI 비교를 바로 체험할 수 있도록 기본값은 .notch로 설정하되 언제든 전환 가능
+            self.hudStyle = .notch
+            UserDefaults.standard.set(OverlayHUDStyle.notch.rawValue, forKey: hudStyleKey)
         }
     }
 

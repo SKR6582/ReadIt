@@ -11,7 +11,10 @@ enum ReadItError: LocalizedError {
         case .screenNotFound:
             return "캡처할 디스플레이를 찾지 못했어요."
         case .screenPermissionDenied:
-            return "화면 기록 권한이 필요해요. 시스템 설정 › 개인정보 보호 및 보안 › 화면 및 시스템 오디오 기록에서 ReadIt을 허용한 뒤 앱을 다시 실행해 주세요."
+            let appName = (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                ?? "ReadIt"
+            return "화면 기록 권한이 필요해요. 시스템 설정 › 개인정보 보호 및 보안 › 화면 및 시스템 오디오 기록에서 \(appName)을 허용한 뒤 앱을 다시 실행해 주세요."
         case .captureFailed(let message):
             return "화면 캡처 실패: \(message)"
         }

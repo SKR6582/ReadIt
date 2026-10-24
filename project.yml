@@ -1,0 +1,22 @@
+name: ReadIt
+options:
+  bundleIdPrefix: com.seungjun
+  deploymentTarget:
+    macOS: "15.0"
+targets:
+  ReadIt:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Sources/LiveCaption
+      - path: Resources/AppIcon.icns
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.seungjun.readit
+        PRODUCT_NAME: ReadIt
+        INFOPLIST_FILE: Resources/Info.plist
+        SWIFT_VERSION: "5.10"
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_STYLE: Automatic
+        COMBINE_HIDPI_IMAGES: YES

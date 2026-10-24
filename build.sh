@@ -1,25 +1,56 @@
 #!/bin/bash
 # ReadIt.app 빌드 스크립트
-#   ./build.sh          → build/ReadIt.app 생성
-#   ./build.sh run      → 빌드 후 실행 (기존 인스턴스 종료)
-#   ./build.sh install  → 빌드 후 /Applications 에 설치하고 실행
-#   ./build.sh dmg      → build/ReadIt.dmg 생성
+#   ./build.sh          → build/ReadIt (Test).app 생성 (테스트용, Bundle ID: com.seungjun.readit.test)
+#   ./build.sh run      → 테스트용 빌드 후 바로 실행 (권한 분리)
+#   ./build.sh release  → build/ReadIt.app 생성 (정식 배포용, Bundle ID: com.seungjun.readit)
+#   ./build.sh install  → 정식 빌드 후 /Applications 에 설치하고 실행
+#   ./build.sh dmg      → build/ReadIt.dmg 생성 (정식 배포용)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="ReadIt"
+ACTION="${1:-test}"
+
+# 테스트 모드 여부 결정
+case "${ACTION}" in
+  dmg|install|release)
+    IS_TEST=false
+    APP_NAME="ReadIt"
+    BUNDLE_ID="com.seungjun.readit"
+    DISPLAY_NAME="ReadIt"
+    ;;
+  *)
+    IS_TEST=true
+    APP_NAME="ReadIt (Test)"
+    BUNDLE_ID="com.seungjun.readit.test"
+    DISPLAY_NAME="ReadIt (Test)"
+    ;;
+esac
+
 APP="build/${APP_NAME}.app"
 
 echo "▶ Swift 빌드 (release)…"
-swift build -c release
+if [ "${IS_TEST}" = "true" ]; then
+  swift build -c release
+  BIN_PATH=".build/release/ReadIt"
+else
+  swift build -c release --arch arm64 --arch x86_64
+  BIN_PATH=".build/apple/Products/Release/ReadIt"
+fi
 
-echo "▶ 앱 번들 구성…"
+echo "▶ 앱 번들 구성 (${APP_NAME})…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp ".build/release/${APP_NAME}" "$APP/Contents/MacOS/${APP_NAME}"
+cp "$BIN_PATH" "$APP/Contents/MacOS/ReadIt"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ -f "Resources/AppIcon.icns" ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+fi
+
+# 테스트용인 경우 Info.plist 수정하여 시스템 권한 분리
+if [ "${IS_TEST}" = "true" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${DISPLAY_NAME}" "$APP/Contents/Info.plist"
 fi
 
 # 권한(TCC)은 코드 서명에 묶인다. 고정된 개발자 인증서가 있으면 그걸로 서명해야
@@ -30,25 +61,26 @@ if [ -n "${IDENTITY}" ]; then
   echo "▶ 코드 서명: ${IDENTITY}"
   codesign --force --deep --sign "${IDENTITY}" "$APP"
 else
-  echo "▶ 코드 서명: ad-hoc (재빌드 시 권한을 다시 허용해야 할 수 있음)"
+  echo "▶ 코드 서명: ad-hoc (${APP_NAME})"
   codesign --force --deep --sign - "$APP"
 fi
 
 echo "완료: $APP"
 
-case "${1:-}" in
+case "${ACTION}" in
   run)
-    pkill -x "${APP_NAME}" 2>/dev/null || true
+    pkill -f "${APP}/Contents/MacOS/ReadIt" 2>/dev/null || true
     sleep 0.3
     open "$APP"
+    echo "실행 완료: $APP"
     ;;
   install)
-    pkill -x "${APP_NAME}" 2>/dev/null || true
+    pkill -x "ReadIt" 2>/dev/null || true
     sleep 0.3
-    rm -rf "/Applications/${APP_NAME}.app"
-    cp -R "$APP" "/Applications/${APP_NAME}.app"
-    open "/Applications/${APP_NAME}.app"
-    echo "/Applications/${APP_NAME}.app 설치 완료"
+    rm -rf "/Applications/ReadIt.app"
+    cp -R "$APP" "/Applications/ReadIt.app"
+    open "/Applications/ReadIt.app"
+    echo "/Applications/ReadIt.app 설치 완료"
     ;;
   dmg)
     DMG_DIR="build/dmg"

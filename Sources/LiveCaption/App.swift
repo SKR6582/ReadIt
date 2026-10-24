@@ -24,10 +24,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let permissionWarningItem = NSMenuItem(title: "화면 기록 권한 필요 (설정 열기…)", action: #selector(openPermissionSettings), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "로그인 시 자동 실행", action: nil, keyEquivalent: "")
+    private let notchHUDItem = NSMenuItem(title: "노치 통합 HUD 사용", action: #selector(toggleNotchHUD), keyEquivalent: "")
+    private let liveTranslateItem = NSMenuItem(title: "실시간 라이브 번역", action: #selector(menuLiveTranslate), keyEquivalent: "3")
+    private let regionTranslateItem = NSMenuItem(title: "구역 지정 번역", action: #selector(menuRegionTranslate), keyEquivalent: "4")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         hotkey.onTrigger = { [weak self] mode in self?.triggerTranslation(mode: mode) }
+        LiveTranslationManager.shared.onStateChanged = { [weak self] _ in self?.refreshMenuState() }
+        RegionTranslationManager.shared.onStateChanged = { [weak self] _ in self?.refreshMenuState() }
         requestPermissionsIfNeeded()
         startHotkey()
         TextRecognizer.warmUp()
@@ -39,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        LiveTranslationManager.shared.stop()
+        RegionTranslationManager.shared.stop()
         hotkey.stop()
     }
 
@@ -56,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         permissionWarningItem.target = self
         menu.addItem(permissionWarningItem)
 
-        // 2. 번역 실행 (기본 ⌥1, 세로쓰기 ⌥2)
+        // 2. 번역 실행 (기본 ⌥1, 세로쓰기 ⌥2, 실시간 라이브 ⌥3, 구역 지정 ⌥4)
         let translateItem = NSMenuItem(title: "화면 바로 번역", action: #selector(menuTranslate), keyEquivalent: "1")
         translateItem.keyEquivalentModifierMask = [.option]
         translateItem.image = NSImage(systemSymbolName: "translate", accessibilityDescription: "번역")
@@ -68,6 +75,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         verticalTranslateItem.image = NSImage(systemSymbolName: "character.textbox", accessibilityDescription: "세로 번역")
         verticalTranslateItem.target = self
         menu.addItem(verticalTranslateItem)
+
+        liveTranslateItem.keyEquivalentModifierMask = [.option]
+        liveTranslateItem.image = NSImage(systemSymbolName: "waveform.badge.magnifyingglass", accessibilityDescription: "라이브 번역")
+        liveTranslateItem.target = self
+        menu.addItem(liveTranslateItem)
+
+        regionTranslateItem.keyEquivalentModifierMask = [.option]
+        regionTranslateItem.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "구역 지정 번역")
+        regionTranslateItem.target = self
+        menu.addItem(regionTranslateItem)
         menu.addItem(.separator())
 
         // 3. 언어 팩 및 기본 환경설정
@@ -76,6 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         packItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         packItem.target = self
         menu.addItem(packItem)
+
+        notchHUDItem.target = self
+        notchHUDItem.image = NSImage(systemSymbolName: "menubar.rectangle", accessibilityDescription: nil)
+        menu.addItem(notchHUDItem)
 
         loginItem.action = #selector(toggleLoginItem)
         loginItem.target = self
@@ -89,7 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         // 4. 앱 종료
-        let quitItem = NSMenuItem(title: "ReadIt 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appName = (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? "ReadIt"
+        let quitItem = NSMenuItem(title: "\(appName) 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = [.command]
         quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
         menu.addItem(quitItem)
@@ -106,13 +130,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let screenAccess = CGPreflightScreenCaptureAccess()
         permissionWarningItem.isHidden = screenAccess
 
+        let isLive = LiveTranslationManager.shared.isRunning
+        liveTranslateItem.state = isLive ? .on : .off
+        liveTranslateItem.title = isLive ? "실시간 라이브 번역 중지" : "실시간 라이브 번역"
+
+        let isRegion = RegionTranslationManager.shared.isRunning
+        regionTranslateItem.state = isRegion ? .on : .off
+        regionTranslateItem.title = isRegion ? "구역 지정 번역 중지" : "구역 지정 번역"
+
+        notchHUDItem.state = AppSettings.shared.hudStyle == .notch ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         updateStatusIcon()
     }
 
     private func updateStatusIcon() {
         let hasPermission = CGPreflightScreenCaptureAccess()
-        let symbol = (!hasPermission || !hotkey.isRunning) ? "exclamationmark.triangle" : "translate"
+        let symbol: String
+        if !hasPermission || !hotkey.isRunning {
+            symbol = "exclamationmark.triangle"
+        } else if LiveTranslationManager.shared.isRunning {
+            symbol = "waveform.badge.magnifyingglass"
+        } else if RegionTranslationManager.shared.isRunning {
+            symbol = "viewfinder"
+        } else {
+            symbol = "translate"
+        }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "ReadIt")
         image?.isTemplate = true
         statusItem?.button?.image = image
@@ -131,6 +173,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func menuLiveTranslate() {
+        triggerTranslation(mode: .live)
+    }
+
+    @objc private func menuRegionTranslate() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            MainActor.assumeIsolated { self?.triggerTranslation(mode: .region) }
+        }
+    }
+
     @objc private func openPermissionSettings() {
         let screen = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         if let url = URL(string: screen) { NSWorkspace.shared.open(url) }
@@ -138,6 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openLanguagePacks() {
         LanguagePackWindowController.shared.show()
+    }
+
+    @objc private func toggleNotchHUD() {
+        AppSettings.shared.hudStyle = (AppSettings.shared.hudStyle == .notch) ? .floating : .notch
+        refreshMenuState()
     }
 
     @objc private func toggleLoginItem() {
@@ -182,6 +239,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Pipeline: 캡처 → OCR → 문단 묶기 → 색 추출 → 번역
 
     func triggerTranslation(mode: TranslationMode = .standard) {
+        if mode == .region {
+            if let overlay {
+                overlay.dismiss()
+            }
+            if LiveTranslationManager.shared.isRunning {
+                LiveTranslationManager.shared.stop()
+            }
+            RegionTranslationManager.shared.toggle()
+            return
+        }
+
+        if mode == .live {
+            if let overlay {
+                overlay.dismiss()
+            }
+            if RegionTranslationManager.shared.isRunning {
+                RegionTranslationManager.shared.stop()
+            }
+            LiveTranslationManager.shared.toggle()
+            return
+        }
+
+        // 일반 번역 실행 시 라이브/구역 모드가 켜져 있다면 먼저 중지
+        if LiveTranslationManager.shared.isRunning {
+            LiveTranslationManager.shared.stop()
+        }
+        if RegionTranslationManager.shared.isRunning {
+            RegionTranslationManager.shared.stop()
+        }
+
         // 오버레이가 이미 떠 있으면 토글하여 닫기
         if let overlay {
             overlay.dismiss()

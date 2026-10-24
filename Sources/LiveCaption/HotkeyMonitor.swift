@@ -8,6 +8,8 @@ import Cocoa
 enum TranslationMode {
     case standard
     case vertical
+    case live
+    case region
 }
 
 final class HotkeyMonitor {
@@ -41,7 +43,17 @@ final class HotkeyMonitor {
             )
             guard status == noErr else { return noErr }
 
-            let mode: TranslationMode = (hotKeyID.id == 3) ? .vertical : .standard
+            let mode: TranslationMode
+            switch hotKeyID.id {
+            case 3:
+                mode = .vertical
+            case 4:
+                mode = .live
+            case 5:
+                mode = .region
+            default:
+                mode = .standard
+            }
             let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userData).takeUnretainedValue()
             DispatchQueue.main.async {
                 monitor.onTrigger?(mode)
@@ -67,6 +79,12 @@ final class HotkeyMonitor {
 
         // 핫키 3: ⌥ + 2 (Option + 2) - 일본어 세로쓰기 전용 번역
         registerHotKey(id: 3, keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(optionKey))
+
+        // 핫키 4: ⌥ + 3 (Option + 3) - 실시간 라이브 번역
+        registerHotKey(id: 4, keyCode: UInt32(kVK_ANSI_3), modifiers: UInt32(optionKey))
+
+        // 핫키 5: ⌥ + 4 (Option + 4) - 구역 지정 번역 (일반/라이브 전환 지원)
+        registerHotKey(id: 5, keyCode: UInt32(kVK_ANSI_4), modifiers: UInt32(optionKey))
 
         return !hotKeyRefs.isEmpty
     }

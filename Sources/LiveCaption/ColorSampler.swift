@@ -14,9 +14,43 @@ enum ColorSampler {
         var nsColor: NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: 1) }
     }
 
+    static func normalizedTextKey(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var scalars = String.UnicodeScalarView()
+        scalars.reserveCapacity(trimmed.unicodeScalars.count)
+        var lastWasSpace = false
+        for s in trimmed.unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(s) {
+                if !lastWasSpace {
+                    scalars.append(" ")
+                    lastWasSpace = true
+                }
+            } else {
+                scalars.append(s)
+                lastWasSpace = false
+            }
+        }
+        return String(scalars).lowercased()
+    }
+
+    private static func stableBlockId(for key: String, occurrence: Int) -> Int {
+        var hasher = Hasher()
+        hasher.combine(key)
+        hasher.combine(occurrence)
+        let hash = hasher.finalize()
+        return hash == Int.min ? 0 : abs(hash)
+    }
+
     static func makeOverlayBlocks(_ blocks: [TextBlock], image: CGImage, scale: CGFloat) -> [OverlayBlock] {
-        blocks.compactMap { block in
+        var occurrenceCounts: [String: Int] = [:]
+
+        return blocks.compactMap { block in
             guard let language = block.language else { return nil }
+            let key = normalizedTextKey(block.text)
+            let count = occurrenceCounts[key, default: 0]
+            occurrenceCounts[key] = count + 1
+            let stableId = stableBlockId(for: key, occurrence: count)
+
             let pixelRect = CGRect(
                 x: block.rect.minX * scale,
                 y: block.rect.minY * scale,
@@ -33,7 +67,7 @@ enum ColorSampler {
                 baseSize = max(9, lineHeight * 0.8)
             }
             return OverlayBlock(
-                id: block.id,
+                id: stableId,
                 rect: block.rect,
                 sourceText: block.text,
                 sourceLanguage: language.rawValue,
