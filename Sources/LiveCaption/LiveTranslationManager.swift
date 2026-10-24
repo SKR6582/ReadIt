@@ -418,14 +418,9 @@ final class LiveTranslationManager {
         wasTrackingScroll = false
         model.isTrackingScroll = false
 
-        if !model.blocks.isEmpty || !model.anchorBlocks.isEmpty {
-            withAnimation(.easeOut(duration: 0.12)) {
-                model.setBlocks([])
-            }
-        }
-
+        // 새 스캔 결과가 도착해 mergeBlocks로 자연스럽게 교체될 때까지 기존 블록을 한꺼번에 비우지 않음
         lastSignature = ""
-        scheduleSettleWait(milliseconds: 240)
+        scheduleSettleWait(milliseconds: 180)
     }
 
     private func scheduleSettleWait(milliseconds: Int) {
@@ -455,6 +450,9 @@ final class LiveTranslationManager {
     }
 
     private func cachedTranslation(for sourceText: String) -> String? {
+        if let sharedCached = TranslationCacheStore.shared.lookup(sourceText) {
+            return sharedCached
+        }
         if let exact = translationCache[sourceText] {
             return exact
         }
@@ -463,6 +461,7 @@ final class LiveTranslationManager {
     }
 
     private func storeTranslation(_ translated: String, for sourceText: String) {
+        TranslationCacheStore.shared.store(translated, for: sourceText)
         if translationCache.count > 2000 {
             translationCache.removeAll(keepingCapacity: true)
         }
@@ -539,9 +538,6 @@ final class LiveTranslationManager {
                         clampedScrollDirection = 0
                         wasTrackingScroll = false
                         forceFullScan = true
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            model.setBlocks([])
-                        }
                     } else if wasTrackingScroll {
                         if scrollTracker.hasReference {
                             let boundaryResult = scrollTracker.checkScrollBoundary(
@@ -563,9 +559,6 @@ final class LiveTranslationManager {
                             case .targetLost:
                                 scrollTracker.reset()
                                 cumulativeScrollDelta = .zero
-                                withAnimation(.easeOut(duration: 0.12)) {
-                                    model.setBlocks([])
-                                }
                             }
                         }
                         wasTrackingScroll = false
@@ -591,9 +584,6 @@ final class LiveTranslationManager {
                                 scrollTracker.reset()
                                 cumulativeScrollDelta = .zero
                                 forceFullScan = true
-                                withAnimation(.easeOut(duration: 0.12)) {
-                                    model.setBlocks([])
-                                }
                             }
                         } else {
                             forceFullScan = true

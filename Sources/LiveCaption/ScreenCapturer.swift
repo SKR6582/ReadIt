@@ -30,8 +30,16 @@ struct CapturedScreen {
 enum ScreenCapturer {
     /// 마우스 커서가 있는 디스플레이 전체를 캡처한다 (ReadIt 자신의 창은 제외).
     static func captureScreenUnderMouse() async throws -> CapturedScreen {
+        try await capture(screen: nil)
+    }
+
+    /// 지정된 디스플레이(없으면 마우스 커서 위치 디스플레이) 전체를 캡처한다 (ReadIt 자신의 창은 제외).
+    static func capture(screen preferredScreen: NSScreen? = nil) async throws -> CapturedScreen {
         let mouse = NSEvent.mouseLocation
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main,
+        let resolvedScreen = preferredScreen
+            ?? NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+            ?? NSScreen.main
+        guard let screen = resolvedScreen,
               let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         else {
             throw ReadItError.screenNotFound

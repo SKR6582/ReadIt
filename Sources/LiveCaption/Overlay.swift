@@ -66,14 +66,23 @@ final class OverlayModel: ObservableObject {
     // MARK: - 구역 지정 번역(⌥4) 전용 상태
     @Published var isRegionMode: Bool = false
     @Published var isSelectingRegion: Bool = false
+    @Published var isAdjustingRegion: Bool = false
     @Published var regionRect: CGRect?
     @Published var isRegionLive: Bool = false
+    @Published var isRegionVerticalOnly: Bool = false
+    @Published var activePresetName: String? = nil
+    @Published var overrideLanguages: Set<String>? = nil
     @Published var regionCropImage: CGImage?
 
     var onSelectRegion: ((CGRect) -> Void)?
+    var onUpdateRegionRect: ((CGRect) -> Void)?
     var onToggleRegionLive: ((Bool) -> Void)?
+    var onToggleRegionVertical: ((Bool) -> Void)?
     var onReselectRegion: (() -> Void)?
     var onRefreshRegion: (() -> Void)?
+    var onApplyPreset: ((RegionPreset) -> Void)?
+    var onSavePreset: ((String) -> Void)?
+    var onDeletePreset: ((UUID) -> Void)?
 
     /// 스크롤 추적 시 기준이 되는 원본 블록 배열
     private(set) var anchorBlocks: [OverlayBlock] = []
@@ -121,8 +130,8 @@ final class OverlayModel: ObservableObject {
     }
 
     static func regionControlBarRect(for region: CGRect, canvasSize: CGSize) -> CGRect {
-        let halfW: CGFloat = 215
-        let halfH: CGFloat = 26
+        let halfW: CGFloat = 290
+        let halfH: CGFloat = 28
         let centerX = min(max(region.midX, halfW + 12), canvasSize.width - halfW - 12)
         let centerY: CGFloat
         if region.minY >= 58 {
@@ -135,11 +144,22 @@ final class OverlayModel: ObservableObject {
         return CGRect(x: centerX - halfW, y: centerY - halfH, width: halfW * 2, height: halfH * 2)
     }
 
+    /// 구역 테두리(이동) 또는 모서리/변 핸들(크기 조절) 위에 마우스 커서가 있는지 판정
+    static func isPointOnRegionFrame(_ point: CGPoint, region: CGRect, tolerance: CGFloat = 10) -> Bool {
+        let outer = region.insetBy(dx: -tolerance, dy: -tolerance)
+        guard outer.contains(point) else { return false }
+        let innerWidth = max(0, region.width - tolerance * 2)
+        let innerHeight = max(0, region.height - tolerance * 2)
+        guard innerWidth > 0, innerHeight > 0 else { return true }
+        let inner = region.insetBy(dx: tolerance, dy: tolerance)
+        return !inner.contains(point)
+    }
+
     /// 노치 통합 HUD 모드일 때 화면 상단 중앙에서 클릭 및 호버를 수신할 히트 테스트 영역
     static func notchHUDHitRect(canvasSize: CGSize, notchMetrics: NotchMetrics, isExpanded: Bool = true) -> CGRect {
-        let width: CGFloat = isExpanded ? 640 : max(340, notchMetrics.hardwareNotchWidth + 160)
+        let width: CGFloat = isExpanded ? 760 : max(340, notchMetrics.hardwareNotchWidth + 160)
         let baseHeight = notchMetrics.hasHardwareNotch ? notchMetrics.notchHeight : 0
-        let height: CGFloat = isExpanded ? (baseHeight + 145) : max(38, baseHeight + 18)
+        let height: CGFloat = isExpanded ? (baseHeight + 220) : max(38, baseHeight + 18)
         return CGRect(
             x: (canvasSize.width - width) / 2.0,
             y: 0,
@@ -396,7 +416,17 @@ final class OverlayModel: ObservableObject {
         guard !text.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        AppSettings.shared.recordCopiedText(text)
         flash("텍스트를 클립보드에 복사했어요")
+    }
+
+    func copyText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(trimmed, forType: .string)
+        AppSettings.shared.recordCopiedText(trimmed)
+        flash("문장을 클립보드에 복사했어요")
     }
 
     func flash(_ message: String) {

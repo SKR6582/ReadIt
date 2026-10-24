@@ -18,9 +18,8 @@ struct WindowTabContext: Equatable, Sendable {
            abs(bounds.height - other.bounds.height) > 6 {
             return false
         }
-        if !title.isEmpty && !other.title.isEmpty && title != other.title {
-            return false
-        }
+        // 브라우저 알림 수, 영상 재생 제목, SPA 하위 경로 변경 등으로 창 제목만 바뀌는 경우에는
+        // 동일한 창/위치이므로 스크롤 앵커를 즉시 파기하지 않고 유지한다.
         return true
     }
 }

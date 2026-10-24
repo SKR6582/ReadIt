@@ -160,28 +160,18 @@ struct OverlayView: View {
                     )
             }
 
-            // 4. 지정 구역 테두리 프레임 (라이브 모드는 솔리드 펄스 테두리, 일반 모드는 깔끔한 가이드 테두리)
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    model.isRegionLive
-                        ? Color.white.opacity(pulseGlow ? 0.95 : 0.60)
-                        : Color.white.opacity(0.65),
-                    lineWidth: model.isRegionLive ? 2.0 : 1.5
-                )
-                .shadow(
-                    color: model.isRegionLive
-                        ? Color.white.opacity(pulseGlow ? 0.35 : 0.12)
-                        : Color.black.opacity(0.25),
-                    radius: model.isRegionLive ? 8 : 4
-                )
-                .frame(width: region.width + 4, height: region.height + 4)
-                .position(x: region.midX, y: region.midY)
-                .allowsHitTesting(false)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                        pulseGlow = true
-                    }
+            // 4. 지정 구역 인터랙티브 테두리 프레임 (테두리 드래그로 이동, 모서리·변 핸들 드래그로 크기 조절)
+            RegionInteractiveFrameView(
+                model: model,
+                region: region,
+                pulseGlow: pulseGlow
+            )
+            .zIndex(900_000)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                    pulseGlow = true
                 }
+            }
 
             // 5. 구역 전용 컨트롤 UI (노치 통합 HUD vs 구역 인접 플로팅 바)
             if settings.hudStyle == .notch {
@@ -314,6 +304,27 @@ struct OverlayView: View {
                     .help("현재 구역 다시 번역")
                 }
 
+                // 2-1. 세로쓰기 전용 토글 버튼 (만화·웹소설 구역용)
+                Button {
+                    model.onToggleRegionVertical?(!model.isRegionVerticalOnly)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "character.textbox")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("세로")
+                            .font(.system(size: 11, weight: model.isRegionVerticalOnly ? .semibold : .medium))
+                    }
+                    .foregroundStyle(model.isRegionVerticalOnly ? Color.white : Color.primary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(model.isRegionVerticalOnly ? Color.accentColor : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("세로쓰기 전용 인식 토글 (만화·웹소설)")
+
                 Divider()
                     .frame(height: 14)
 
@@ -354,21 +365,39 @@ struct OverlayView: View {
                 .buttonStyle(.plain)
                 .help("구역 내 번역 전체 복사 (⌘C)")
 
-                // 5. 구역 다시 지정 버튼
+                // 5. 빠른 프리셋 저장 버튼
                 Button {
-                    model.onReselectRegion?()
+                    let nextNum = min(AppSettings.maxRegionPresets, settings.regionPresets.count + 1)
+                    let defaultName = model.isRegionVerticalOnly ? "만화·소설 \(nextNum)" : (model.isRegionLive ? "라이브 구역 \(nextNum)" : "구역 \(nextNum)")
+                    model.onSavePreset?(defaultName)
                 } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: "viewfinder")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("구역")
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: 10))
+                        Text(model.activePresetName ?? "저장")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .padding(.horizontal, 5)
                     .padding(.vertical, 3)
                 }
                 .buttonStyle(.plain)
-                .help("번역 구역 다시 드래그하여 지정")
+                .help("현재 구역 위치와 모드를 프리셋으로 저장")
+
+                // 6. 구역 다시 지정 버튼
+                Button {
+                    model.onReselectRegion?()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "viewfinder")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("새 구역")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                }
+                .buttonStyle(.plain)
+                .help("번역 구역 처음부터 다시 드래그하여 지정")
 
                 // 6. 닫기 버튼
                 Button(action: onDismiss) {
@@ -778,6 +807,7 @@ struct OverlayView: View {
         let text = block.translated ?? block.sourceText
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        AppSettings.shared.recordCopiedText(text)
         withAnimation {
             copiedBlockFeedbackId = block.id
         }
@@ -1176,12 +1206,15 @@ private struct NotchActionButton: View {
 
 private struct NotchHUDView: View {
     @ObservedObject var model: OverlayModel
+    @ObservedObject private var settings = AppSettings.shared
     let pulseGlow: Bool
     var onDismiss: () -> Void
     var onOpenLanguagePacks: ([Locale.Language]) -> Void
 
     @Namespace private var notchNamespace
     @State private var isHovering = false
+    @State private var showPresetBar = false
+    @State private var showRecentCopyBar = false
     @State private var hoverTask: Task<Void, Never>?
 
     private var hasHardwareNotch: Bool {
@@ -1249,6 +1282,9 @@ private struct NotchHUDView: View {
         .animation(.spring(response: 0.28, dampingFraction: 0.84), value: model.notice)
         .animation(.spring(response: 0.30, dampingFraction: 0.84), value: model.missingLanguages)
         .animation(.spring(response: 0.26, dampingFraction: 0.84), value: model.isRegionLive)
+        .animation(.spring(response: 0.26, dampingFraction: 0.84), value: model.isRegionVerticalOnly)
+        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: showPresetBar)
+        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: showRecentCopyBar)
         .allowsHitTesting(!model.isLiveMode || model.isNotchExpanded || isHovering)
     }
 
@@ -1384,15 +1420,25 @@ private struct NotchHUDView: View {
             || model.scrollSpeedWarning != nil
             || model.notice != nil
             || !model.missingLanguages.isEmpty
+            || (model.isRegionMode && showPresetBar)
+            || (showRecentCopyBar && !settings.recentCopiedTexts.isEmpty)
     }
 
-    // MARK: - 하단 보조 피드백 영역 (진행바 · 스크롤 경고 · 복사 토스트 · 언어 팩 안내)
+    // MARK: - 하단 보조 피드백 영역 (진행바 · 스크롤 경고 · 복사 토스트 · 언어 팩 안내 · 프리셋 · 최근 복사)
 
     @ViewBuilder
     private var notchAuxiliarySection: some View {
         VStack(spacing: 6) {
             if model.phase == .recognizing || model.phase == .translating {
                 thinProgressBar
+            }
+
+            if model.isRegionMode && showPresetBar {
+                notchPresetRow
+            }
+
+            if showRecentCopyBar && !settings.recentCopiedTexts.isEmpty {
+                notchRecentCopyRow
             }
 
             if let warning = model.scrollSpeedWarning {
@@ -1487,6 +1533,111 @@ private struct NotchHUDView: View {
         }
     }
 
+    @ViewBuilder
+    private var notchPresetRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bookmark.fill")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Color.cyan)
+
+            if !settings.regionPresets.isEmpty {
+                ForEach(settings.regionPresets) { preset in
+                    let isCurrent = model.activePresetName == preset.name
+                    HStack(spacing: 3) {
+                        Button {
+                            model.onApplyPreset?(preset)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(preset.name)
+                                    .font(.system(size: 11, weight: isCurrent ? .bold : .medium))
+                                    .foregroundStyle(Color.white)
+                                Text(preset.isLive ? "라이브" : "일반")
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(Color.white.opacity(0.65))
+                            }
+                            .padding(.leading, 7)
+                            .padding(.trailing, 3)
+                            .padding(.vertical, 3)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            model.onDeletePreset?(preset.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8.5, weight: .bold))
+                                .foregroundStyle(Color.white.opacity(0.55))
+                                .padding(.trailing, 6)
+                                .padding(.vertical, 3)
+                        }
+                        .buttonStyle(.plain)
+                        .help("프리셋 삭제")
+                    }
+                    .background(
+                        Capsule()
+                            .fill(isCurrent ? Color.accentColor.opacity(0.48) : Color.white.opacity(0.10))
+                    )
+                }
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: 1, height: 13)
+            }
+
+            Text("저장:")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.60))
+
+            ForEach(["게임 채팅", "브라우저", "자막", "만화·소설"], id: \.self) { label in
+                Button {
+                    model.onSavePreset?(label)
+                } label: {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 8.5, weight: .bold))
+                        Text(label)
+                            .font(.system(size: 10.5, weight: .medium))
+                    }
+                    .foregroundStyle(Color.white.opacity(0.88))
+                    .padding(.horizontal, 6.5)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .help("현재 구역 위치·모드를 '\(label)' 프리셋으로 저장")
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+    }
+
+    @ViewBuilder
+    private var notchRecentCopyRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.65))
+
+            ForEach(Array(settings.recentCopiedTexts.prefix(4).enumerated()), id: \.offset) { _, snippet in
+                let preview = snippet.replacingOccurrences(of: "\n", with: " ")
+                let shortText = preview.count > 18 ? String(preview.prefix(18)) + "…" : preview
+                Button {
+                    model.copyText(snippet)
+                } label: {
+                    Text(shortText)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.88))
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.09)))
+                }
+                .buttonStyle(.plain)
+                .help(snippet)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+    }
+
     // MARK: - 2px 초슬림 진행바
 
     @ViewBuilder
@@ -1560,6 +1711,18 @@ private struct NotchHUDView: View {
                     helpText: "인식된 모든 번역문을 클립보드에 복사합니다 (⌘C)"
                 ) {
                     model.copyAll()
+                }
+
+                if !settings.recentCopiedTexts.isEmpty {
+                    NotchActionButton(
+                        icon: "clock.arrow.circlepath",
+                        title: "최근",
+                        isActive: showRecentCopyBar,
+                        isCompact: true,
+                        helpText: "최근 복사한 문장 목록 열기"
+                    ) {
+                        showRecentCopyBar.toggle()
+                    }
                 }
 
                 NotchActionButton(
@@ -1742,6 +1905,16 @@ private struct NotchHUDView: View {
             }
 
             NotchActionButton(
+                icon: "character.textbox",
+                title: "세로",
+                isActive: model.isRegionVerticalOnly,
+                isCompact: true,
+                helpText: "만화·웹소설 세로쓰기 전용 인식 토글"
+            ) {
+                model.onToggleRegionVertical?(!model.isRegionVerticalOnly)
+            }
+
+            NotchActionButton(
                 keyCap: "⌥",
                 title: "원문",
                 isActive: model.showOriginal,
@@ -1762,11 +1935,33 @@ private struct NotchHUDView: View {
                 model.copyAll()
             }
 
+            if !settings.recentCopiedTexts.isEmpty {
+                NotchActionButton(
+                    icon: "clock.arrow.circlepath",
+                    title: "최근",
+                    isActive: showRecentCopyBar,
+                    isCompact: true,
+                    helpText: "최근 복사한 번역 문장 다시 복사"
+                ) {
+                    showRecentCopyBar.toggle()
+                }
+            }
+
+            NotchActionButton(
+                icon: "bookmark.fill",
+                title: model.activePresetName ?? "프리셋",
+                isActive: showPresetBar,
+                isCompact: true,
+                helpText: "구역 프리셋 불러오기 및 현재 구역 저장"
+            ) {
+                showPresetBar.toggle()
+            }
+
             NotchActionButton(
                 icon: "viewfinder",
-                title: "구역",
+                title: "새 구역",
                 isCompact: true,
-                helpText: "번역할 화면 구역 다시 드래그하여 지정"
+                helpText: "번역할 화면 구역을 처음부터 다시 드래그하여 지정"
             ) {
                 model.onReselectRegion?()
             }
@@ -2200,6 +2395,232 @@ private struct RegionSelectionOverlay: View {
         }
         .onDisappear {
             NSCursor.arrow.set()
+        }
+    }
+}
+
+// MARK: - Interactive Region Frame (구역 테두리 드래그 이동 및 8방향 핸들 크기 조절)
+
+private struct RegionInteractiveFrameView: View {
+    @ObservedObject var model: OverlayModel
+    let region: CGRect
+    let pulseGlow: Bool
+
+    private enum HandleKind: CaseIterable {
+        case topLeft, topRight, bottomLeft, bottomRight
+        case top, bottom, left, right
+    }
+
+    @State private var initialRect: CGRect?
+    @State private var initialBlocks: [OverlayBlock] = []
+    @State private var isHoveringFrame = false
+
+    private let minWidth: CGFloat = 64
+    private let minHeight: CGFloat = 44
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // 1. 시각적 테두리
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(
+                    model.isAdjustingRegion
+                        ? Color.cyan
+                        : (model.isRegionLive
+                            ? Color.white.opacity(pulseGlow ? 0.95 : 0.62)
+                            : Color.white.opacity(isHoveringFrame ? 0.92 : 0.68)),
+                    lineWidth: model.isAdjustingRegion ? 2.2 : (model.isRegionLive ? 2.0 : 1.6)
+                )
+                .shadow(
+                    color: model.isRegionLive
+                        ? Color.white.opacity(pulseGlow ? 0.32 : 0.12)
+                        : Color.black.opacity(0.25),
+                    radius: model.isRegionLive ? 8 : 4
+                )
+                .frame(width: region.width + 4, height: region.height + 4)
+                .position(x: region.midX, y: region.midY)
+                .allowsHitTesting(false)
+
+            // 2. 4변 테두리 드래그 스트립 (드래그 시 구역 전체 이동)
+            edgeMoveStrip(
+                width: max(16, region.width - 24),
+                height: 12,
+                x: region.midX,
+                y: region.minY
+            )
+            edgeMoveStrip(
+                width: max(16, region.width - 24),
+                height: 12,
+                x: region.midX,
+                y: region.maxY
+            )
+            edgeMoveStrip(
+                width: 12,
+                height: max(16, region.height - 24),
+                x: region.minX,
+                y: region.midY
+            )
+            edgeMoveStrip(
+                width: 12,
+                height: max(16, region.height - 24),
+                x: region.maxX,
+                y: region.midY
+            )
+
+            // 3. 8방향 크기 조절 핸들 (4모서리 + 4변 중앙)
+            ForEach(HandleKind.allCases, id: \.self) { kind in
+                let pt = handlePosition(for: kind, in: region)
+                let isCorner = isCornerHandle(kind)
+                Circle()
+                    .fill(model.isAdjustingRegion || isHoveringFrame ? Color.white : Color.white.opacity(0.78))
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.black.opacity(0.45), lineWidth: 1.0)
+                    )
+                    .frame(width: isCorner ? 9 : 7, height: isCorner ? 9 : 7)
+                    .padding(6)
+                    .contentShape(Rectangle())
+                    .position(x: pt.x, y: pt.y)
+                    .onHover { hovering in
+                        isHoveringFrame = hovering
+                    }
+                    .gesture(resizeGesture(for: kind))
+                    .help(isCorner ? "드래그하여 구역 크기 조절" : "드래그하여 변 크기 조절")
+            }
+
+            // 4. 이동/크기 조절 중 실시간 치수 배지
+            if model.isAdjustingRegion {
+                Text("\(Int(region.width)) × \(Int(region.height))")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.black.opacity(0.82)))
+                    .position(
+                        x: region.midX,
+                        y: region.maxY + 18 <= model.canvasSize.height ? region.maxY + 18 : max(18, region.minY - 18)
+                    )
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(width: model.canvasSize.width, height: model.canvasSize.height, alignment: .topLeading)
+        .coordinateSpace(name: "RegionInteractiveCanvas")
+    }
+
+    private func edgeMoveStrip(width: CGFloat, height: CGFloat, x: CGFloat, y: CGFloat) -> some View {
+        Color.white.opacity(0.001)
+            .frame(width: width, height: height)
+            .contentShape(Rectangle())
+            .position(x: x, y: y)
+            .onHover { hovering in
+                isHoveringFrame = hovering
+            }
+            .gesture(moveGesture)
+            .help("테두리를 드래그하여 구역 위치 이동")
+    }
+
+    private var moveGesture: some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("RegionInteractiveCanvas"))
+            .onChanged { value in
+                if initialRect == nil {
+                    initialRect = region
+                    initialBlocks = model.blocks
+                    model.isAdjustingRegion = true
+                }
+                guard let base = initialRect else { return }
+                let dx = value.location.x - value.startLocation.x
+                let dy = value.location.y - value.startLocation.y
+                let clampedX = max(0, min(model.canvasSize.width - base.width, base.minX + dx))
+                let clampedY = max(0, min(model.canvasSize.height - base.height, base.minY + dy))
+                let actualDx = clampedX - base.minX
+                let actualDy = clampedY - base.minY
+                let newRect = CGRect(x: clampedX, y: clampedY, width: base.width, height: base.height).integral
+                model.regionRect = newRect
+                model.blocks = initialBlocks.map { b in
+                    var copy = b
+                    copy.rect = b.rect.offsetBy(dx: actualDx, dy: actualDy)
+                    return copy
+                }
+            }
+            .onEnded { _ in
+                let finalRect = model.regionRect ?? region
+                initialRect = nil
+                initialBlocks = []
+                model.isAdjustingRegion = false
+                model.onUpdateRegionRect?(finalRect)
+            }
+    }
+
+    private func resizeGesture(for kind: HandleKind) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("RegionInteractiveCanvas"))
+            .onChanged { value in
+                if initialRect == nil {
+                    initialRect = region
+                    model.isAdjustingRegion = true
+                }
+                guard let base = initialRect else { return }
+                let dx = value.location.x - value.startLocation.x
+                let dy = value.location.y - value.startLocation.y
+
+                var minX = base.minX
+                var maxX = base.maxX
+                var minY = base.minY
+                var maxY = base.maxY
+
+                switch kind {
+                case .topLeft:
+                    minX = min(maxX - minWidth, max(0, base.minX + dx))
+                    minY = min(maxY - minHeight, max(0, base.minY + dy))
+                case .topRight:
+                    maxX = max(minX + minWidth, min(model.canvasSize.width, base.maxX + dx))
+                    minY = min(maxY - minHeight, max(0, base.minY + dy))
+                case .bottomLeft:
+                    minX = min(maxX - minWidth, max(0, base.minX + dx))
+                    maxY = max(minY + minHeight, min(model.canvasSize.height, base.maxY + dy))
+                case .bottomRight:
+                    maxX = max(minX + minWidth, min(model.canvasSize.width, base.maxX + dx))
+                    maxY = max(minY + minHeight, min(model.canvasSize.height, base.maxY + dy))
+                case .top:
+                    minY = min(maxY - minHeight, max(0, base.minY + dy))
+                case .bottom:
+                    maxY = max(minY + minHeight, min(model.canvasSize.height, base.maxY + dy))
+                case .left:
+                    minX = min(maxX - minWidth, max(0, base.minX + dx))
+                case .right:
+                    maxX = max(minX + minWidth, min(model.canvasSize.width, base.maxX + dx))
+                }
+
+                model.regionRect = CGRect(
+                    x: minX,
+                    y: minY,
+                    width: maxX - minX,
+                    height: maxY - minY
+                ).integral
+            }
+            .onEnded { _ in
+                let finalRect = model.regionRect ?? region
+                initialRect = nil
+                model.isAdjustingRegion = false
+                model.onUpdateRegionRect?(finalRect)
+            }
+    }
+
+    private func isCornerHandle(_ kind: HandleKind) -> Bool {
+        switch kind {
+        case .topLeft, .topRight, .bottomLeft, .bottomRight: return true
+        case .top, .bottom, .left, .right: return false
+        }
+    }
+
+    private func handlePosition(for kind: HandleKind, in rect: CGRect) -> CGPoint {
+        switch kind {
+        case .topLeft: return CGPoint(x: rect.minX, y: rect.minY)
+        case .topRight: return CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeft: return CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomRight: return CGPoint(x: rect.maxX, y: rect.maxY)
+        case .top: return CGPoint(x: rect.midX, y: rect.minY)
+        case .bottom: return CGPoint(x: rect.midX, y: rect.maxY)
+        case .left: return CGPoint(x: rect.minX, y: rect.midY)
+        case .right: return CGPoint(x: rect.maxX, y: rect.midY)
         }
     }
 }

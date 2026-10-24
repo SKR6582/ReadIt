@@ -43,16 +43,35 @@ final class RegionTranslationManager {
 
     var onStateChanged: ((Bool) -> Void)?
 
-    func start() {
-        guard !isRunning else { return }
-
+    func start(preset: RegionPreset? = nil, forceSelection: Bool = false) {
         guard CGPreflightScreenCaptureAccess() else {
             CGRequestScreenCaptureAccess()
             return
         }
 
+        if isRunning {
+            if forceSelection {
+                beginRegionSelection()
+            } else if let preset {
+                applyPreset(preset)
+            }
+            return
+        }
+
+        let targetPreset = forceSelection ? nil : (preset ?? AppSettings.shared.lastRegionPreset)
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
+        let mouseScreen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
+
+        let screen: NSScreen
+        if let targetPreset,
+           targetPreset.displayID != 0,
+           let matched = NSScreen.screens.first(where: { $0.readItDisplayID == targetPreset.displayID }) {
+            screen = matched
+        } else {
+            screen = mouseScreen
+        }
 
         let model = OverlayModel(
             image: nil,
@@ -60,25 +79,29 @@ final class RegionTranslationManager {
             isLiveMode: false,
             isRegionMode: true
         )
-        model.isSelectingRegion = true
-        model.isRegionLive = preferredLiveMode
+
+        if let targetPreset {
+            preferredLiveMode = targetPreset.isLive
+            model.isRegionLive = targetPreset.isLive
+            model.isRegionVerticalOnly = targetPreset.isVerticalOnly
+            model.overrideLanguages = targetPreset.overrideLanguages
+            model.activePresetName = targetPreset.name == "마지막 구역" ? nil : targetPreset.name
+            model.regionRect = targetPreset.normalizedRect.toCanvasRect(in: screen.frame.size)
+            model.isSelectingRegion = false
+            if targetPreset.isLive {
+                model.startSessionTimer()
+            }
+        } else {
+            model.isSelectingRegion = true
+            model.isRegionLive = preferredLiveMode
+            model.isRegionVerticalOnly = false
+        }
 
         let panel = OverlayPanel(screen: screen, model: model) { languages in
             LanguagePackWindowController.shared.show(highlighting: languages)
         }
 
-        model.onSelectRegion = { [weak self] rect in
-            self?.didSelectRegion(rect)
-        }
-        model.onToggleRegionLive = { [weak self] isLive in
-            self?.setRegionLiveMode(isLive)
-        }
-        model.onReselectRegion = { [weak self] in
-            self?.beginRegionSelection()
-        }
-        model.onRefreshRegion = { [weak self] in
-            self?.refreshSingleScan()
-        }
+        bindModelCallbacks(model)
 
         panel.onClose = { [weak self] in
             self?.stop()
@@ -104,6 +127,42 @@ final class RegionTranslationManager {
         panel.ignoresMouseEvents = false
         panel.present()
         onStateChanged?(true)
+
+        if !model.isSelectingRegion, model.regionRect != nil {
+            persistCurrentRegionState()
+            updateMousePassThrough()
+            startCurrentRegionMode()
+        }
+    }
+
+    private func bindModelCallbacks(_ model: OverlayModel) {
+        model.onSelectRegion = { [weak self] rect in
+            self?.didSelectRegion(rect)
+        }
+        model.onUpdateRegionRect = { [weak self] rect in
+            self?.didUpdateRegionRect(rect)
+        }
+        model.onToggleRegionLive = { [weak self] isLive in
+            self?.setRegionLiveMode(isLive)
+        }
+        model.onToggleRegionVertical = { [weak self] isVertical in
+            self?.setRegionVerticalOnly(isVertical)
+        }
+        model.onReselectRegion = { [weak self] in
+            self?.beginRegionSelection()
+        }
+        model.onRefreshRegion = { [weak self] in
+            self?.refreshSingleScan()
+        }
+        model.onApplyPreset = { [weak self] preset in
+            self?.applyPreset(preset)
+        }
+        model.onSavePreset = { [weak self] name in
+            self?.saveCurrentRegionAsPreset(name: name)
+        }
+        model.onDeletePreset = { [weak self] id in
+            self?.deletePreset(id: id)
+        }
     }
 
     func stop() {
@@ -182,6 +241,7 @@ final class RegionTranslationManager {
 
         model.regionRect = clampedRect
         model.isSelectingRegion = false
+        model.activePresetName = nil
         if model.isRegionLive {
             model.startSessionTimer()
         }
@@ -191,6 +251,26 @@ final class RegionTranslationManager {
         clampedScrollDirection = 0
         scrollTracker.reset()
 
+        persistCurrentRegionState()
+        updateMousePassThrough()
+        startCurrentRegionMode()
+    }
+
+    /// 구역 테두리 드래그 이동 또는 모서리/변 핸들 리사이즈가 완료되었을 때 호출된다.
+    private func didUpdateRegionRect(_ rect: CGRect) {
+        guard isRunning, let model = overlayModel else { return }
+        let clampedRect = rect.intersection(CGRect(origin: .zero, size: model.canvasSize)).integral
+        guard clampedRect.width >= 40, clampedRect.height >= 36 else { return }
+
+        model.regionRect = clampedRect
+        model.isAdjustingRegion = false
+        lastSignature = ""
+        bandTracker.reset()
+        cumulativeScrollDelta = .zero
+        clampedScrollDirection = 0
+        scrollTracker.reset()
+
+        persistCurrentRegionState()
         updateMousePassThrough()
         startCurrentRegionMode()
     }
@@ -210,11 +290,11 @@ final class RegionTranslationManager {
             model.isRegionLive = isLive
             model.isTrackingScroll = false
             if isLive {
-                // 라이브 모드로 전환 시 정적 배경 이미지를 걷어내어 실시간 게임/앱 화면 노출
                 model.regionCropImage = nil
             }
         }
 
+        persistCurrentRegionState()
         guard !model.isSelectingRegion, model.regionRect != nil else { return }
 
         lastSignature = ""
@@ -224,6 +304,105 @@ final class RegionTranslationManager {
 
         updateMousePassThrough()
         startCurrentRegionMode()
+    }
+
+    /// 구역 번역 내 세로쓰기 전용(true) <-> 가로/일반(false) 모드를 즉시 전환한다.
+    private func setRegionVerticalOnly(_ isVertical: Bool) {
+        guard isRunning, let model = overlayModel else { return }
+        guard model.isRegionVerticalOnly != isVertical else { return }
+
+        withAnimation(.easeOut(duration: 0.15)) {
+            model.isRegionVerticalOnly = isVertical
+        }
+        persistCurrentRegionState()
+        guard !model.isSelectingRegion, model.regionRect != nil else { return }
+
+        lastSignature = ""
+        bandTracker.reset()
+        startCurrentRegionMode()
+    }
+
+    /// 프리셋을 즉시 현재 구역에 적용한다.
+    func applyPreset(_ preset: RegionPreset) {
+        if !isRunning {
+            start(preset: preset, forceSelection: false)
+            return
+        }
+        guard let model = overlayModel else { return }
+
+        // 다른 모니터의 프리셋인 경우 재시작하여 해당 디스플레이 패널로 전환
+        if preset.displayID != 0,
+           let currentScreen,
+           currentScreen.readItDisplayID != preset.displayID,
+           NSScreen.screens.contains(where: { $0.readItDisplayID == preset.displayID }) {
+            stop()
+            start(preset: preset, forceSelection: false)
+            return
+        }
+
+        preferredLiveMode = preset.isLive
+        let newRect = preset.normalizedRect.toCanvasRect(in: model.canvasSize)
+
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+            model.isSelectingRegion = false
+            model.regionRect = newRect
+            model.isRegionLive = preset.isLive
+            model.isRegionVerticalOnly = preset.isVerticalOnly
+            model.overrideLanguages = preset.overrideLanguages
+            model.activePresetName = preset.name == "마지막 구역" ? nil : preset.name
+            if preset.isLive {
+                model.regionCropImage = nil
+                model.startSessionTimer()
+            } else {
+                model.stopSessionTimer()
+            }
+        }
+
+        persistCurrentRegionState(presetName: preset.name)
+        lastSignature = ""
+        bandTracker.reset()
+        cumulativeScrollDelta = .zero
+        clampedScrollDirection = 0
+        scrollTracker.reset()
+
+        updateMousePassThrough()
+        startCurrentRegionMode()
+    }
+
+    private func saveCurrentRegionAsPreset(name: String) {
+        guard let model = overlayModel, let region = model.regionRect else { return }
+        let displayID = currentScreen?.readItDisplayID ?? 0
+        let saved = AppSettings.shared.saveRegionPreset(
+            name: name,
+            rect: region,
+            canvasSize: model.canvasSize,
+            displayID: displayID,
+            isLive: model.isRegionLive,
+            isVerticalOnly: model.isRegionVerticalOnly,
+            overrideLanguages: model.overrideLanguages
+        )
+        model.activePresetName = saved.name
+        model.flash("'\(saved.name)' 프리셋을 저장했어요")
+        onStateChanged?(isRunning)
+    }
+
+    private func deletePreset(id: UUID) {
+        AppSettings.shared.deleteRegionPreset(id: id)
+        onStateChanged?(isRunning)
+    }
+
+    private func persistCurrentRegionState(presetName: String? = nil) {
+        guard let model = overlayModel, let region = model.regionRect else { return }
+        let displayID = currentScreen?.readItDisplayID ?? 0
+        AppSettings.shared.saveLastRegion(
+            rect: region,
+            canvasSize: model.canvasSize,
+            displayID: displayID,
+            isLive: model.isRegionLive,
+            isVerticalOnly: model.isRegionVerticalOnly,
+            overrideLanguages: model.overrideLanguages,
+            presetName: presetName ?? model.activePresetName ?? "마지막 구역"
+        )
     }
 
     /// 일반 번역 모드에서 현재 구역을 즉시 다시 스캔한다.
@@ -325,7 +504,7 @@ final class RegionTranslationManager {
               let screen = currentScreen
         else { return }
 
-        if model.isSelectingRegion {
+        if model.isSelectingRegion || model.isAdjustingRegion {
             if panel.ignoresMouseEvents {
                 panel.ignoresMouseEvents = false
             }
@@ -353,14 +532,18 @@ final class RegionTranslationManager {
             ).insetBy(dx: -8, dy: -8)
         }
 
+        let isOnBorderOrHandle = OverlayModel.isPointOnRegionFrame(localPoint, region: region, tolerance: 10)
+
         let shouldCaptureMouse: Bool
         if model.isRegionLive {
-            // 라이브 모드: 컨트롤 바를 조작할 때만 마우스 클릭을 받고, 구역 내부와 나머지 화면은 아래 게임/앱으로 통과
-            shouldCaptureMouse = controlBarRect.contains(localPoint)
+            // 라이브 모드: 컨트롤 바 또는 구역 테두리/모서리 핸들 위에 있을 때만 마우스를 잡고,
+            // 구역 안쪽 본문과 나머지 화면은 아래 게임/브라우저로 통과시킨다.
+            shouldCaptureMouse = controlBarRect.contains(localPoint) || isOnBorderOrHandle
         } else {
-            // 일반 모드: 컨트롤 바 및 번역된 구역 내부(개별 블록 호버/복사)만 클릭을 받고 외부 화면은 통과
+            // 일반 모드: 컨트롤 바, 테두리 핸들, 번역된 구역 내부(개별 블록 호버/복사)에서 클릭 수신
             shouldCaptureMouse = controlBarRect.contains(localPoint)
-                || region.insetBy(dx: -6, dy: -6).contains(localPoint)
+                || isOnBorderOrHandle
+                || region.insetBy(dx: -10, dy: -10).contains(localPoint)
         }
 
         if panel.ignoresMouseEvents == shouldCaptureMouse {
@@ -433,10 +616,7 @@ final class RegionTranslationManager {
                 clampedScrollDirection = 0
                 wasTrackingScroll = false
                 model.isTrackingScroll = false
-                withAnimation(.easeOut(duration: 0.10)) {
-                    model.setBlocks([])
-                }
-                scheduleSettleWait(milliseconds: 200)
+                scheduleSettleWait(milliseconds: 180)
                 return
             }
 
@@ -470,7 +650,7 @@ final class RegionTranslationManager {
             guard abs(dyAtCapture) >= 3.0 else { return }
 
             do {
-                let capture = try await ScreenCapturer.captureScreenUnderMouse()
+                let capture = try await ScreenCapturer.capture(screen: self.currentScreen)
                 guard !Task.isCancelled, self.isRunning else { return }
 
                 let regionContext = WindowTabContext(
@@ -520,7 +700,7 @@ final class RegionTranslationManager {
         model.phase = .recognizing
 
         do {
-            let capture = try await ScreenCapturer.captureScreenUnderMouse()
+            let capture = try await ScreenCapturer.capture(screen: currentScreen)
             if Task.isCancelled || !isRunning { return }
 
             let scale = CGFloat(capture.image.width) / max(1, model.canvasSize.width)
@@ -543,10 +723,10 @@ final class RegionTranslationManager {
                 )
             }
 
-            let blocks = BlockBuilder.build(from: lines, verticalOnly: false).filter { block in
+            let blocks = BlockBuilder.build(from: lines, verticalOnly: model.isRegionVerticalOnly).filter { block in
                 guard let lang = block.language, lang != .korean else { return false }
                 guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
-                return AppSettings.shared.isEnabled(code)
+                return AppSettings.shared.isEnabled(code, overrideLanguages: model.overrideLanguages)
             }
 
             let fullImage = capture.image
@@ -611,7 +791,7 @@ final class RegionTranslationManager {
 
             do {
                 let captureGen = scrollGeneration
-                let capture = try await ScreenCapturer.captureScreenUnderMouse()
+                let capture = try await ScreenCapturer.capture(screen: currentScreen)
                 if Task.isCancelled || !isRunning || !model.isRegionLive { break }
                 if isInteracting || scrollGeneration != captureGen { continue }
 
@@ -706,13 +886,13 @@ final class RegionTranslationManager {
                             )
                         }
 
-                        let rangeBlocks = BlockBuilder.build(from: offsetLines, verticalOnly: false).filter { block in
+                        let rangeBlocks = BlockBuilder.build(from: offsetLines, verticalOnly: model.isRegionVerticalOnly).filter { block in
                             guard block.rect.midY >= range.coreRect.minY - 4,
                                   block.rect.midY <= range.coreRect.maxY + 4
                             else { return false }
                             guard let lang = block.language, lang != .korean else { return false }
                             guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
-                            return AppSettings.shared.isEnabled(code)
+                            return AppSettings.shared.isEnabled(code, overrideLanguages: model.overrideLanguages)
                         }
                         partialTextBlocks.append(contentsOf: rangeBlocks)
                     }
@@ -760,10 +940,10 @@ final class RegionTranslationManager {
                         )
                     }
 
-                    let blocks = BlockBuilder.build(from: lines, verticalOnly: false).filter { block in
+                    let blocks = BlockBuilder.build(from: lines, verticalOnly: model.isRegionVerticalOnly).filter { block in
                         guard let lang = block.language, lang != .korean else { return false }
                         guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
-                        return AppSettings.shared.isEnabled(code)
+                        return AppSettings.shared.isEnabled(code, overrideLanguages: model.overrideLanguages)
                     }
 
                     let currentSignature = blocks.map { "\($0.text)_\(Int($0.rect.minX))_\(Int($0.rect.minY))" }.joined(separator: "|")
@@ -855,6 +1035,9 @@ final class RegionTranslationManager {
     }
 
     private func cachedTranslation(for sourceText: String) -> String? {
+        if let sharedCached = TranslationCacheStore.shared.lookup(sourceText) {
+            return sharedCached
+        }
         if let exact = translationCache[sourceText] {
             return exact
         }
@@ -863,6 +1046,7 @@ final class RegionTranslationManager {
     }
 
     private func storeTranslation(_ translated: String, for sourceText: String) {
+        TranslationCacheStore.shared.store(translated, for: sourceText)
         if translationCache.count > 2000 {
             translationCache.removeAll(keepingCapacity: true)
         }

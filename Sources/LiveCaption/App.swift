@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let notchHUDItem = NSMenuItem(title: "노치 통합 HUD 사용", action: #selector(toggleNotchHUD), keyEquivalent: "")
     private let liveTranslateItem = NSMenuItem(title: "실시간 라이브 번역", action: #selector(menuLiveTranslate), keyEquivalent: "3")
     private let regionTranslateItem = NSMenuItem(title: "구역 지정 번역", action: #selector(menuRegionTranslate), keyEquivalent: "4")
+    private let regionRedrawItem = NSMenuItem(title: "새 구역 드래그로 지정…", action: #selector(menuRegionRedraw), keyEquivalent: "")
+    private var presetMenuItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -85,6 +87,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         regionTranslateItem.image = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: "구역 지정 번역")
         regionTranslateItem.target = self
         menu.addItem(regionTranslateItem)
+
+        regionRedrawItem.image = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: "새 구역 지정")
+        regionRedrawItem.target = self
+        menu.addItem(regionRedrawItem)
+
         menu.addItem(.separator())
 
         // 3. 언어 팩 및 기본 환경설정
@@ -137,6 +144,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let isRegion = RegionTranslationManager.shared.isRunning
         regionTranslateItem.state = isRegion ? .on : .off
         regionTranslateItem.title = isRegion ? "구역 지정 번역 중지" : "구역 지정 번역"
+        regionRedrawItem.isHidden = AppSettings.shared.lastRegionPreset == nil && !isRegion
+
+        if let menu = statusItem.menu {
+            for item in presetMenuItems {
+                menu.removeItem(item)
+            }
+            presetMenuItems.removeAll()
+
+            let presets = AppSettings.shared.regionPresets
+            if !presets.isEmpty {
+                let baseIndex = menu.index(of: regionRedrawItem) + 1
+                for (offset, preset) in presets.enumerated() {
+                    let modeTag = preset.isLive ? "라이브" : "일반"
+                    let vertTag = preset.isVerticalOnly ? " · 세로" : ""
+                    let item = NSMenuItem(
+                        title: "\(preset.name) (\(modeTag)\(vertTag))",
+                        action: #selector(menuSelectRegionPreset(_:)),
+                        keyEquivalent: ""
+                    )
+                    item.target = self
+                    item.representedObject = preset.id.uuidString
+                    item.image = NSImage(systemSymbolName: "bookmark.fill", accessibilityDescription: preset.name)
+                    menu.insertItem(item, at: baseIndex + offset)
+                    presetMenuItems.append(item)
+                }
+            }
+        }
 
         notchHUDItem.state = AppSettings.shared.hudStyle == .notch ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -180,6 +214,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuRegionTranslate() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             MainActor.assumeIsolated { self?.triggerTranslation(mode: .region) }
+        }
+    }
+
+    @objc private func menuRegionRedraw() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            MainActor.assumeIsolated {
+                LiveTranslationManager.shared.stop()
+                RegionTranslationManager.shared.start(preset: nil, forceSelection: true)
+            }
+        }
+    }
+
+    @objc private func menuSelectRegionPreset(_ sender: NSMenuItem) {
+        guard let idString = sender.representedObject as? String,
+              let id = UUID(uuidString: idString),
+              let preset = AppSettings.shared.regionPresets.first(where: { $0.id == id })
+        else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            MainActor.assumeIsolated {
+                LiveTranslationManager.shared.stop()
+                RegionTranslationManager.shared.applyPreset(preset)
+            }
         }
     }
 
