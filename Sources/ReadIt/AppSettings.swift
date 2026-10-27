@@ -4,15 +4,15 @@ import Foundation
 import NaturalLanguage
 
 enum OverlayHUDStyle: String, CaseIterable, Identifiable {
-    case floating = "floating"
     case notch = "notch"
+    case floating = "floating"
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .floating: return "플로팅 캡슐 (기본)"
-        case .notch: return "노치 통합 HUD"
+        case .notch: return "노치 통합 HUD (기본)"
+        case .floating: return "플로팅 캡슐"
         }
     }
 }
@@ -185,7 +185,7 @@ final class AppSettings: ObservableObject {
 
     private let userDefaultsKey = "ReadIt_EnabledLanguages"
     private let menuBarKey = "ReadIt_IncludeMenuBar"
-    private let hudStyleKey = "ReadIt_OverlayHUDStyle"
+    private let hudStyleKey = "ReadIt_OverlayHUDStyle_v2"
     private let lastRegionKey = "ReadIt_LastRegionPreset_v1"
     private let regionPresetsKey = "ReadIt_RegionPresets_v1"
     private let recentCopiedKey = "ReadIt_RecentCopiedTexts_v1"

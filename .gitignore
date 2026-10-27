@@ -6,3 +6,8 @@ build/
 xcuserdata/
 *.xcworkspace/
 DerivedData/
+*.p12
+*.pfx
+*.pem
+*.key
+.env*

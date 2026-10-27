@@ -10,7 +10,6 @@ cd "$(dirname "$0")"
 
 ACTION="${1:-test}"
 
-# 테스트 모드 여부 결정
 case "${ACTION}" in
   dmg|install|release)
     IS_TEST=false
@@ -39,31 +38,64 @@ fi
 
 echo "▶ 앱 번들 구성 (${APP_NAME})…"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "$BIN_PATH" "$APP/Contents/MacOS/ReadIt"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 if [ -f "Resources/AppIcon.icns" ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 fi
 
-# 테스트용인 경우 Info.plist 수정하여 시스템 권한 분리
+SPARKLE_SRC=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [ ! -d "$SPARKLE_SRC" ]; then
+  echo "오류: Sparkle.framework를 찾을 수 없습니다 ($SPARKLE_SRC)" >&2
+  exit 1
+fi
+/usr/bin/ditto "$SPARKLE_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
+
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/ReadIt" 2>/dev/null || true
+
 if [ "${IS_TEST}" = "true" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$APP/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${DISPLAY_NAME}" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :SUEnableAutomaticChecks false" "$APP/Contents/Info.plist"
 fi
 
-# 권한(TCC)은 코드 서명에 묶인다. 고정된 개발자 인증서가 있으면 그걸로 서명해야
-# 재빌드해도 손쉬운 사용/화면 기록 권한이 유지된다. 없으면 ad-hoc 서명.
-IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-  | grep -m1 -oE '"(Apple Development|Developer ID Application)[^"]*"' | tr -d '"' || true)
-if [ -n "${IDENTITY}" ]; then
-  echo "▶ 코드 서명: ${IDENTITY}"
-  codesign --force --deep --sign "${IDENTITY}" "$APP"
-else
-  echo "▶ 코드 서명: ad-hoc (${APP_NAME})"
-  codesign --force --deep --sign - "$APP"
+IDENTITY="${SIGN_IDENTITY:-}"
+if [ -z "${IDENTITY}" ]; then
+  IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep -m1 -oE '"(Developer ID Application|Apple Development|ReadIt Signing)[^"]*"' | tr -d '"' || true)
 fi
+if [ -z "${IDENTITY}" ]; then
+  IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep -m1 -oE '"[^"]+"' | tr -d '"' || true)
+fi
+
+if [ -n "${IDENTITY}" ]; then
+  SIGN_TARGET="${IDENTITY}"
+  echo "▶ 코드 서명: ${SIGN_TARGET}"
+elif [ "${IS_TEST}" = "true" ] || [ "${ALLOW_ADHOC:-0}" = "1" ]; then
+  SIGN_TARGET="-"
+  echo "▶ 코드 서명: ad-hoc (${APP_NAME})"
+else
+  echo "오류: 정식 빌드에는 고정 코드 서명 인증서가 필요합니다." >&2
+  echo "  키체인 접근에서 'ReadIt Signing' 코드 서명 인증서를 생성하거나," >&2
+  echo "  SIGN_IDENTITY=\"인증서 이름\" 환경변수를 지정하세요." >&2
+  echo "  (테스트 목적으로 ad-hoc 서명을 강제하려면 ALLOW_ADHOC=1 ./build.sh ${ACTION})" >&2
+  exit 1
+fi
+
+SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
+if [ -d "$SPARKLE_FW" ]; then
+  codesign --force --sign "${SIGN_TARGET}" "$SPARKLE_FW/Versions/B/XPCServices/Installer.xpc"
+  codesign --force --sign "${SIGN_TARGET}" "$SPARKLE_FW/Versions/B/XPCServices/Downloader.xpc"
+  codesign --force --sign "${SIGN_TARGET}" "$SPARKLE_FW/Versions/B/Autoupdate"
+  codesign --force --sign "${SIGN_TARGET}" "$SPARKLE_FW/Versions/B/Updater.app"
+  codesign --force --sign "${SIGN_TARGET}" "$SPARKLE_FW"
+fi
+codesign --force --sign "${SIGN_TARGET}" "$APP"
+codesign --verify --deep --strict "$APP"
+codesign -dr - "$APP" 2>&1 || true
 
 echo "완료: $APP"
 
@@ -95,17 +127,14 @@ case "${ACTION}" in
     cp -R "$APP" "$DMG_DIR/"
     ln -s /Applications "$DMG_DIR/Applications"
 
-    # SVG 배경 이미지를 고해상도 PNG로 변환
     if [ -f "Resources/dmg-background.svg" ]; then
       rsvg-convert -w 660 -h 400 Resources/dmg-background.svg -o "$DMG_DIR/.background/background.png"
       rsvg-convert -w 1320 -h 800 Resources/dmg-background.svg -o "$DMG_DIR/.background/background@2x.png"
     fi
 
-    # Read-Write 임시 디스크 이미지 생성
     hdiutil create -srcfolder "$DMG_DIR" -volname "${APP_NAME}" -fs HFS+ \
         -fsargs "-c c=64,a=16,e=16" -format UDRW -size 200m "$DMG_TEMP"
 
-    # 디스크 이미지 마운트
     DEVICE=$(hdiutil attach -readwrite -noverify -noautoopen "$DMG_TEMP" | grep '^/dev/' | head -n 1 | awk '{print $1}')
     MOUNT_DIR=$(hdiutil info | grep -A 1 "$DEVICE" | grep '/Volumes/' | awk '{print $NF}')
     if [ -z "$MOUNT_DIR" ]; then
@@ -115,7 +144,6 @@ case "${ACTION}" in
     echo "마운트 위치: $MOUNT_DIR (Device: $DEVICE)"
     sleep 2
 
-    # Finder를 이용해 창 크기, 위치, 배경 이미지 및 아이콘 좌표 설정
     VOL_NAME=$(basename "$MOUNT_DIR")
     osascript - "$VOL_NAME" "$MOUNT_DIR" "${APP_NAME}" << 'EOF' || true
     on run argv
@@ -149,12 +177,10 @@ case "${ACTION}" in
     end run
 EOF
 
-    # 볼륨 설정 동기화 및 언마운트
     sync || true
     hdiutil detach "$DEVICE" -force || true
     sleep 1
 
-    # 최종 압축(UDZO) DMG 생성
     echo "최종 DMG 압축 중..."
     hdiutil convert "$DMG_TEMP" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH"
     rm -f "$DMG_TEMP"

@@ -36,7 +36,7 @@
 | **번역문 전체 복사** | **`⌘ + C`** (또는 HUD의 복사 버튼) |
 | **개별 블록 복사** | 번역 문장(블록) 직접 **클릭** |
 | **언어 팩 / 환경설정** | 메뉴 막대 아이콘 ➔ **`번역 언어 팩 설정…` (`⌘,`)** |
-| **업데이트 확인** | 메뉴 막대 아이콘 ➔ **`업데이트 확인…`** (시작 시 자동 확인) |
+| **인앱 자동 업데이트** | 메뉴 막대 아이콘 ➔ **`업데이트 확인…`** (시작 시 자동 확인 후 앱 내에서 바로 설치·재실행) |
 
 ---
 
@@ -44,6 +44,7 @@
 
 1. [GitHub Releases](https://github.com/SKR6582/ReadIt/releases)에서 최신 **`ReadIt.dmg`**를 다운로드합니다.
 2. 다운로드한 `ReadIt.dmg`를 더블 클릭해 열고, **`ReadIt.app` 아이콘을 `Applications`(응용 프로그램) 폴더로 드래그**하여 복사합니다.
+3. 최초 1회 설치 이후부터는 새 버전 출시 시 앱 내 **`업데이트 확인…`**을 통해 DMG를 다시 받지 않고 자동 업데이트됩니다.
 
 > [!IMPORTANT]
 > ### 최초 실행 시 보안 경고("ReadIt을(를) 열지 않음") 해결 방법
@@ -106,6 +107,7 @@ swift build -c release
 ./build.sh release  # build/ReadIt.app 생성 (정식 배포용)
 ./build.sh install  # /Applications 에 설치 후 실행 (정식 배포용)
 ./build.sh dmg      # build/ReadIt.dmg 파일 생성 (정식 배포용)
+./release.sh 1.3.0 "변경 사항" --publish  # DMG + Sparkle appcast.xml 생성 및 GitHub Release 게시
 ```
 
 ---

@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import ServiceManagement
+import Sparkle
 
 @main
 struct ReadItMain {
@@ -15,8 +16,13 @@ struct ReadItMain {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUStandardUserDriverDelegate {
     private var statusItem: NSStatusItem!
+    private lazy var updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: self
+    )
     private let hotkey = HotkeyMonitor()
     private var overlay: OverlayPanel?
     private var pipeline: Task<Void, Never>?
@@ -24,7 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let permissionWarningItem = NSMenuItem(title: "화면 기록 권한 필요 (설정 열기…)", action: #selector(openPermissionSettings), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "로그인 시 자동 실행", action: nil, keyEquivalent: "")
-    private let notchHUDItem = NSMenuItem(title: "노치 통합 HUD 사용", action: #selector(toggleNotchHUD), keyEquivalent: "")
     private let liveTranslateItem = NSMenuItem(title: "실시간 라이브 번역", action: #selector(menuLiveTranslate), keyEquivalent: "3")
     private let regionTranslateItem = NSMenuItem(title: "구역 지정 번역", action: #selector(menuRegionTranslate), keyEquivalent: "4")
     private let regionRedrawItem = NSMenuItem(title: "새 구역 드래그로 지정…", action: #selector(menuRegionRedraw), keyEquivalent: "")
@@ -38,11 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         requestPermissionsIfNeeded()
         startHotkey()
         TextRecognizer.warmUp()
-
-        // 시작 후 백그라운드에서 업데이트 확인
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            GitHubUpdater.shared.checkForUpdates(isUserInitiated: false)
-        }
+        _ = updaterController
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -100,10 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         packItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         packItem.target = self
         menu.addItem(packItem)
-
-        notchHUDItem.target = self
-        notchHUDItem.image = NSImage(systemSymbolName: "menubar.rectangle", accessibilityDescription: nil)
-        menu.addItem(notchHUDItem)
 
         loginItem.action = #selector(toggleLoginItem)
         loginItem.target = self
@@ -172,7 +169,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        notchHUDItem.state = AppSettings.shared.hudStyle == .notch ? .on : .off
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         updateStatusIcon()
     }
@@ -248,11 +244,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         LanguagePackWindowController.shared.show()
     }
 
-    @objc private func toggleNotchHUD() {
-        AppSettings.shared.hudStyle = (AppSettings.shared.hudStyle == .notch) ? .floating : .notch
-        refreshMenuState()
-    }
-
     @objc private func toggleLoginItem() {
         do {
             if SMAppService.mainApp.status == .enabled {
@@ -267,7 +258,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates() {
-        GitHubUpdater.shared.checkForUpdates(isUserInitiated: true)
+        NSApp.activate()
+        updaterController.checkForUpdates(nil)
+    }
+
+    nonisolated var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    nonisolated func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        Task { @MainActor in
+            NSApp.activate()
+        }
     }
 
     // MARK: - Permissions

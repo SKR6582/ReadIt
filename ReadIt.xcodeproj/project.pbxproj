@@ -7,45 +7,55 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1AF5E611AD325DABA8580FD4 /* LiveTranslationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D865A5DF2BEDC35725F920 /* LiveTranslationManager.swift */; };
-		1B3193501718F354B3B7BFC1 /* TextRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4D789AC465BAF35AE1A392 /* TextRecognizer.swift */; };
-		31D28A417A93AC5FDC4B4792 /* ScrollTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151185EBB03183CE66A83EA7 /* ScrollTracker.swift */; };
-		395E3CF66E4CE831A95AA629 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1691F72FE06E40DFDF7EC619 /* AppSettings.swift */; };
-		45383AA3246B8EE5D799B766 /* RegionTranslationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29248A8E1AE30ADCAA2636F0 /* RegionTranslationManager.swift */; };
-		46ED9735AE99A6451328B1F6 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9491080C3CB98EF273FCB228 /* App.swift */; };
-		48B61A086F9E11F796BBD61E /* TranslationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54B5DCDAE40A2A67CEB0BB2B /* TranslationCoordinator.swift */; };
-		590AAC1A8642C00690E91899 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D388D4FAEA57A5C4B0342030 /* OverlayView.swift */; };
-		5B5423D9E5B6A9D88BBC26BE /* VerticalTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D296CED27D6B89B7ABEB22 /* VerticalTextView.swift */; };
-		8E2780F7F565DF185575504C /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3474884A8FC6A8A89882F60 /* HotkeyMonitor.swift */; };
-		93F9CF8E322F380765D3AA3C /* GitHubUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A756DA65DB6BDA36387AF /* GitHubUpdater.swift */; };
-		A89599571DB8BC7A224DB946 /* ScreenCapturer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B29EB54CE7209C35C5416543 /* ScreenCapturer.swift */; };
+		18B496A60D0B56C1E36C7882 /* HotkeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D54C4F1FF7ABCE2128A6AF3 /* HotkeyMonitor.swift */; };
+		1937171E9BE88675B2937355 /* Overlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB9701D9F370E845BC000DAD /* Overlay.swift */; };
+		2594ADE843F02ECCB55F0363 /* BlockBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60E5F03AE6F72804E5A43712 /* BlockBuilder.swift */; };
+		5B7409EC7483C7960AD65A74 /* LanguagePackWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5D42F6C91A902275B330A50 /* LanguagePackWindow.swift */; };
+		5C77D451AFE162AA75572FDD /* LiveTranslationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E08D95E7AF306E79EF327CB /* LiveTranslationManager.swift */; };
+		6C6C665049EE4E4720C619F0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4372FD7D0B060AFACB48D0E /* AppSettings.swift */; };
+		6E6D2054E1FD101F4B9D8876 /* ScreenCapturer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 766FD8DC99A3A8E9E17C28DF /* ScreenCapturer.swift */; };
+		7DA873FA8DEAC4E7A347467A /* ColorSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B38492BF26EF0F9F2479B043 /* ColorSampler.swift */; };
+		8FC0015066B6578D574492A7 /* OverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EE6DFE48511D49FA0737317 /* OverlayView.swift */; };
+		94826C29D5FAFA8EDB055E5A /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = B03265EA86DFBB6EEF937068 /* App.swift */; };
 		AE51C0F4063EF2F5C5C7AA78 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 51740915B956F684DAF84832 /* AppIcon.icns */; };
-		C33F1E311BC3C11E2D1F5D5C /* Overlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBA65D085940C2DA616BABA3 /* Overlay.swift */; };
-		C7D41145B6191D546E484DB1 /* BlockBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCD3EB33620EA2773016770 /* BlockBuilder.swift */; };
-		E65485BE388A59101E4111CF /* LanguagePackWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98E69368DDA36CC03DCFF84 /* LanguagePackWindow.swift */; };
-		F3B7D06E855102E0FCD01972 /* ColorSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A186EDDCB5508119BDE0E694 /* ColorSampler.swift */; };
+		C3DFD2816F8D6450493A77FC /* TranslationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D4148BF2381D5D47EBE917 /* TranslationCoordinator.swift */; };
+		C76D55779A7CC714172D3356 /* TextRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5BBA15C6A10EF89B7BCB27C /* TextRecognizer.swift */; };
+		C944BF565645946F99F2ED70 /* RegionTranslationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6D69B11458DCB9227CA422 /* RegionTranslationManager.swift */; };
+		CC5CD1A7E972938710E82BB9 /* ScrollTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED03A8B54747C3EEF19C5B80 /* ScrollTracker.swift */; };
+		D4F440230EE7536F84C41C1F /* VerticalTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB4C4DDA40F4A3CE81B85DE /* VerticalTextView.swift */; };
+		EDFD95805078AA89087D6D14 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = DA6F3CC67FDD458FDC87CAD5 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		151185EBB03183CE66A83EA7 /* ScrollTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollTracker.swift; sourceTree = "<group>"; };
-		1691F72FE06E40DFDF7EC619 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
-		29248A8E1AE30ADCAA2636F0 /* RegionTranslationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegionTranslationManager.swift; sourceTree = "<group>"; };
-		37D865A5DF2BEDC35725F920 /* LiveTranslationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranslationManager.swift; sourceTree = "<group>"; };
+		0D54C4F1FF7ABCE2128A6AF3 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
 		51740915B956F684DAF84832 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
-		54B5DCDAE40A2A67CEB0BB2B /* TranslationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationCoordinator.swift; sourceTree = "<group>"; };
-		9491080C3CB98EF273FCB228 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
-		A186EDDCB5508119BDE0E694 /* ColorSampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorSampler.swift; sourceTree = "<group>"; };
-		B29EB54CE7209C35C5416543 /* ScreenCapturer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapturer.swift; sourceTree = "<group>"; };
-		B98E69368DDA36CC03DCFF84 /* LanguagePackWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguagePackWindow.swift; sourceTree = "<group>"; };
-		BBA65D085940C2DA616BABA3 /* Overlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Overlay.swift; sourceTree = "<group>"; };
-		BC4D789AC465BAF35AE1A392 /* TextRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextRecognizer.swift; sourceTree = "<group>"; };
-		CCCD3EB33620EA2773016770 /* BlockBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockBuilder.swift; sourceTree = "<group>"; };
-		D07A756DA65DB6BDA36387AF /* GitHubUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubUpdater.swift; sourceTree = "<group>"; };
-		D3474884A8FC6A8A89882F60 /* HotkeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyMonitor.swift; sourceTree = "<group>"; };
-		D388D4FAEA57A5C4B0342030 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
-		D4D296CED27D6B89B7ABEB22 /* VerticalTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerticalTextView.swift; sourceTree = "<group>"; };
+		5EE6DFE48511D49FA0737317 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
+		60E5F03AE6F72804E5A43712 /* BlockBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockBuilder.swift; sourceTree = "<group>"; };
+		6FB4C4DDA40F4A3CE81B85DE /* VerticalTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerticalTextView.swift; sourceTree = "<group>"; };
+		766FD8DC99A3A8E9E17C28DF /* ScreenCapturer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenCapturer.swift; sourceTree = "<group>"; };
+		83D4148BF2381D5D47EBE917 /* TranslationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationCoordinator.swift; sourceTree = "<group>"; };
+		8E08D95E7AF306E79EF327CB /* LiveTranslationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranslationManager.swift; sourceTree = "<group>"; };
+		AA6D69B11458DCB9227CA422 /* RegionTranslationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegionTranslationManager.swift; sourceTree = "<group>"; };
+		AB9701D9F370E845BC000DAD /* Overlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Overlay.swift; sourceTree = "<group>"; };
+		B03265EA86DFBB6EEF937068 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		B38492BF26EF0F9F2479B043 /* ColorSampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorSampler.swift; sourceTree = "<group>"; };
+		D4372FD7D0B060AFACB48D0E /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		D5BBA15C6A10EF89B7BCB27C /* TextRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextRecognizer.swift; sourceTree = "<group>"; };
+		E5D42F6C91A902275B330A50 /* LanguagePackWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguagePackWindow.swift; sourceTree = "<group>"; };
+		ED03A8B54747C3EEF19C5B80 /* ScrollTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollTracker.swift; sourceTree = "<group>"; };
 		F0C21A4A276F40D091DF2BB6 /* ReadIt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReadIt.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		9DC7D64DCCA69CF9C1C7B25E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EDFD95805078AA89087D6D14 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		2DA934545C880476F200B0CF /* Products */ = {
@@ -64,37 +74,36 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		9342B7A855901AE544CDA617 /* LiveCaption */ = {
-			isa = PBXGroup;
-			children = (
-				9491080C3CB98EF273FCB228 /* App.swift */,
-				1691F72FE06E40DFDF7EC619 /* AppSettings.swift */,
-				CCCD3EB33620EA2773016770 /* BlockBuilder.swift */,
-				A186EDDCB5508119BDE0E694 /* ColorSampler.swift */,
-				D07A756DA65DB6BDA36387AF /* GitHubUpdater.swift */,
-				D3474884A8FC6A8A89882F60 /* HotkeyMonitor.swift */,
-				B98E69368DDA36CC03DCFF84 /* LanguagePackWindow.swift */,
-				37D865A5DF2BEDC35725F920 /* LiveTranslationManager.swift */,
-				BBA65D085940C2DA616BABA3 /* Overlay.swift */,
-				D388D4FAEA57A5C4B0342030 /* OverlayView.swift */,
-				29248A8E1AE30ADCAA2636F0 /* RegionTranslationManager.swift */,
-				B29EB54CE7209C35C5416543 /* ScreenCapturer.swift */,
-				151185EBB03183CE66A83EA7 /* ScrollTracker.swift */,
-				BC4D789AC465BAF35AE1A392 /* TextRecognizer.swift */,
-				54B5DCDAE40A2A67CEB0BB2B /* TranslationCoordinator.swift */,
-				D4D296CED27D6B89B7ABEB22 /* VerticalTextView.swift */,
-			);
-			name = LiveCaption;
-			path = Sources/LiveCaption;
-			sourceTree = "<group>";
-		};
 		A89351145446F94CE92F2752 = {
 			isa = PBXGroup;
 			children = (
-				9342B7A855901AE544CDA617 /* LiveCaption */,
+				B668E93A3A9BE851B48BDD7B /* ReadIt */,
 				4931628FAF6B0F1B771D5233 /* Resources */,
 				2DA934545C880476F200B0CF /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		B668E93A3A9BE851B48BDD7B /* ReadIt */ = {
+			isa = PBXGroup;
+			children = (
+				B03265EA86DFBB6EEF937068 /* App.swift */,
+				D4372FD7D0B060AFACB48D0E /* AppSettings.swift */,
+				60E5F03AE6F72804E5A43712 /* BlockBuilder.swift */,
+				B38492BF26EF0F9F2479B043 /* ColorSampler.swift */,
+				0D54C4F1FF7ABCE2128A6AF3 /* HotkeyMonitor.swift */,
+				E5D42F6C91A902275B330A50 /* LanguagePackWindow.swift */,
+				8E08D95E7AF306E79EF327CB /* LiveTranslationManager.swift */,
+				AB9701D9F370E845BC000DAD /* Overlay.swift */,
+				5EE6DFE48511D49FA0737317 /* OverlayView.swift */,
+				AA6D69B11458DCB9227CA422 /* RegionTranslationManager.swift */,
+				766FD8DC99A3A8E9E17C28DF /* ScreenCapturer.swift */,
+				ED03A8B54747C3EEF19C5B80 /* ScrollTracker.swift */,
+				D5BBA15C6A10EF89B7BCB27C /* TextRecognizer.swift */,
+				83D4148BF2381D5D47EBE917 /* TranslationCoordinator.swift */,
+				6FB4C4DDA40F4A3CE81B85DE /* VerticalTextView.swift */,
+			);
+			name = ReadIt;
+			path = Sources/ReadIt;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -106,6 +115,7 @@
 			buildPhases = (
 				75979CA3D5820D46E992E14B /* Sources */,
 				62784D5ED1AFDFBF59D7A579 /* Resources */,
+				9DC7D64DCCA69CF9C1C7B25E /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -113,6 +123,7 @@
 			);
 			name = ReadIt;
 			packageProductDependencies = (
+				DA6F3CC67FDD458FDC87CAD5 /* Sparkle */,
 			);
 			productName = ReadIt;
 			productReference = F0C21A4A276F40D091DF2BB6 /* ReadIt.app */;
@@ -141,6 +152,9 @@
 			);
 			mainGroup = A89351145446F94CE92F2752;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				D5F924A6AAEC519BA820D4B2 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2DA934545C880476F200B0CF /* Products */;
 			projectDirPath = "";
@@ -167,22 +181,21 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				46ED9735AE99A6451328B1F6 /* App.swift in Sources */,
-				395E3CF66E4CE831A95AA629 /* AppSettings.swift in Sources */,
-				C7D41145B6191D546E484DB1 /* BlockBuilder.swift in Sources */,
-				F3B7D06E855102E0FCD01972 /* ColorSampler.swift in Sources */,
-				93F9CF8E322F380765D3AA3C /* GitHubUpdater.swift in Sources */,
-				8E2780F7F565DF185575504C /* HotkeyMonitor.swift in Sources */,
-				E65485BE388A59101E4111CF /* LanguagePackWindow.swift in Sources */,
-				1AF5E611AD325DABA8580FD4 /* LiveTranslationManager.swift in Sources */,
-				C33F1E311BC3C11E2D1F5D5C /* Overlay.swift in Sources */,
-				590AAC1A8642C00690E91899 /* OverlayView.swift in Sources */,
-				45383AA3246B8EE5D799B766 /* RegionTranslationManager.swift in Sources */,
-				A89599571DB8BC7A224DB946 /* ScreenCapturer.swift in Sources */,
-				31D28A417A93AC5FDC4B4792 /* ScrollTracker.swift in Sources */,
-				1B3193501718F354B3B7BFC1 /* TextRecognizer.swift in Sources */,
-				48B61A086F9E11F796BBD61E /* TranslationCoordinator.swift in Sources */,
-				5B5423D9E5B6A9D88BBC26BE /* VerticalTextView.swift in Sources */,
+				94826C29D5FAFA8EDB055E5A /* App.swift in Sources */,
+				6C6C665049EE4E4720C619F0 /* AppSettings.swift in Sources */,
+				2594ADE843F02ECCB55F0363 /* BlockBuilder.swift in Sources */,
+				7DA873FA8DEAC4E7A347467A /* ColorSampler.swift in Sources */,
+				18B496A60D0B56C1E36C7882 /* HotkeyMonitor.swift in Sources */,
+				5B7409EC7483C7960AD65A74 /* LanguagePackWindow.swift in Sources */,
+				5C77D451AFE162AA75572FDD /* LiveTranslationManager.swift in Sources */,
+				1937171E9BE88675B2937355 /* Overlay.swift in Sources */,
+				8FC0015066B6578D574492A7 /* OverlayView.swift in Sources */,
+				C944BF565645946F99F2ED70 /* RegionTranslationManager.swift in Sources */,
+				6E6D2054E1FD101F4B9D8876 /* ScreenCapturer.swift in Sources */,
+				CC5CD1A7E972938710E82BB9 /* ScrollTracker.swift in Sources */,
+				C76D55779A7CC714172D3356 /* TextRecognizer.swift in Sources */,
+				C3DFD2816F8D6450493A77FC /* TranslationCoordinator.swift in Sources */,
+				D4F440230EE7536F84C41C1F /* VerticalTextView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -370,6 +383,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		D5F924A6AAEC519BA820D4B2 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DA6F3CC67FDD458FDC87CAD5 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D5F924A6AAEC519BA820D4B2 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 56B18D162E295265058CD93A /* Project object */;
 }

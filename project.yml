@@ -3,14 +3,21 @@ options:
   bundleIdPrefix: com.seungjun
   deploymentTarget:
     macOS: "15.0"
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 targets:
   ReadIt:
     type: application
     platform: macOS
     deploymentTarget: "26.0"
     sources:
-      - path: Sources/LiveCaption
+      - path: Sources/ReadIt
       - path: Resources/AppIcon.icns
+    dependencies:
+      - package: Sparkle
+        product: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.seungjun.readit

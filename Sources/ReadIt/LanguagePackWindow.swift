@@ -200,40 +200,6 @@ struct LanguagePackView: View {
     private var optionsSection: some View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
-                Image(systemName: "menubar.rectangle")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color.accentColor)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("오버레이 컨트롤 UI 스타일")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("기존 플로팅 캡슐 바 또는 화면 상단 노치(Notch) 결합형 통합 HUD 중 선택합니다.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Picker("", selection: $settings.hudStyle) {
-                    ForEach(OverlayHUDStyle.allCases) { style in
-                        Text(style.title).tag(style)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 220)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(NSColor.controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
-                    )
-            )
-
-            HStack(spacing: 12) {
                 Image(systemName: "menubar.dock.rectangle")
                     .font(.system(size: 15))
                     .foregroundStyle(Color.accentColor)
@@ -251,6 +217,40 @@ struct LanguagePackView: View {
                 Toggle("", isOn: $settings.includeMenuBar)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.8)
+                    )
+            )
+
+            HStack(spacing: 12) {
+                Image(systemName: "menubar.rectangle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.accentColor)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("오버레이 컨트롤 UI 스타일")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("기본 노치(Notch) 통합 HUD 대신 플로팅 캡슐 바를 사용하려면 변경하세요.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Picker("", selection: $settings.hudStyle) {
+                    ForEach(OverlayHUDStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
