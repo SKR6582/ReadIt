@@ -9,9 +9,13 @@ import Translation
 final class TranslationCoordinator {
     static let targetLanguage = Locale.Language(identifier: "ko")
 
+    /// 번역 응답이 도착할 때마다 (블록 ID, 번역문)으로 호출된다. 블록이 잠시 화면에서 사라져도 캐시에 저장하기 위한 용도.
+    var onResponse: ((Int, String) -> Void)?
+
     func translate(into model: OverlayModel) async {
         let target = Self.targetLanguage
         let pending = model.blocks.filter { $0.translated == nil }
+        let targetIds = Set(pending.map(\.id))
         let groups = Dictionary(grouping: pending, by: \.sourceLanguage)
         let availability = LanguageAvailability()
         var missing: [Locale.Language] = []
@@ -52,7 +56,54 @@ final class TranslationCoordinator {
 
         if Task.isCancelled { return }
         model.missingLanguages = missing
-        model.finish(failures: failures)
+        model.finish(failures: failures, forBlockIds: targetIds)
+    }
+
+    func translateBlocks(
+        _ targetBlocks: [OverlayBlock],
+        into model: OverlayModel
+    ) async -> (missing: [Locale.Language], failures: [String]) {
+        let target = Self.targetLanguage
+        let pending = targetBlocks.filter { $0.translated == nil }
+        guard !pending.isEmpty else { return ([], []) }
+
+        let groups = Dictionary(grouping: pending, by: \.sourceLanguage)
+        let availability = LanguageAvailability()
+        var missing: [Locale.Language] = []
+        var failures: [String] = []
+
+        for (code, blocks) in groups.sorted(by: { $0.value.count > $1.value.count }) {
+            if Task.isCancelled { return (missing, failures) }
+            let source = Locale.Language(identifier: code)
+            let status = await availability.status(from: source, to: target)
+
+            switch status {
+            case .installed:
+                let requests = blocks.map {
+                    TranslationSession.Request(sourceText: $0.sourceText, clientIdentifier: String($0.id))
+                }
+                do {
+                    try await translateBatch(
+                        requests: requests,
+                        source: source,
+                        target: target,
+                        into: model
+                    )
+                } catch {
+                    if Task.isCancelled { return (missing, failures) }
+                    failures.append("\(Self.displayName(of: source)): \(error.localizedDescription)")
+                    model.markMissingPack(forLanguage: code)
+                }
+            case .supported:
+                missing.append(source)
+                model.markMissingPack(forLanguage: code)
+            case .unsupported:
+                model.markMissingPack(forLanguage: code)
+            @unknown default:
+                model.markMissingPack(forLanguage: code)
+            }
+        }
+        return (missing, failures)
     }
 
     private func translateBatch(
@@ -66,6 +117,7 @@ final class TranslationCoordinator {
             for try await response in session.translate(batch: requests) {
                 if Task.isCancelled { session.cancel(); return }
                 guard let idString = response.clientIdentifier, let id = Int(idString) else { continue }
+                onResponse?(id, response.targetText)
                 model.apply(translation: response.targetText, toBlock: id)
             }
         } else {
@@ -73,7 +125,8 @@ final class TranslationCoordinator {
                 requests: requests,
                 source: source,
                 target: target,
-                into: model
+                into: model,
+                onResponse: onResponse
             )
         }
     }
@@ -104,7 +157,8 @@ private enum LegacySequoiaTranslationBridge {
         requests: [TranslationSession.Request],
         source: Locale.Language,
         target: Locale.Language,
-        into model: OverlayModel
+        into model: OverlayModel,
+        onResponse: ((Int, String) -> Void)?
     ) async throws {
         let config = TranslationSession.Configuration(source: source, target: target)
         let hostPanel = NSPanel(
@@ -132,6 +186,7 @@ private enum LegacySequoiaTranslationBridge {
                             return
                         }
                         guard let idString = response.clientIdentifier, let id = Int(idString) else { continue }
+                        onResponse?(id, response.targetText)
                         model.apply(translation: response.targetText, toBlock: id)
                     }
                     if !hasResumed {

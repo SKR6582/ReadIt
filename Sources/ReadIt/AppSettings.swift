@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import NaturalLanguage
+import ServiceManagement
 
 enum OverlayHUDStyle: String, CaseIterable, Identifiable {
     case notch = "notch"
@@ -13,6 +14,20 @@ enum OverlayHUDStyle: String, CaseIterable, Identifiable {
         switch self {
         case .notch: return "노치 통합 HUD (기본)"
         case .floating: return "플로팅 캡슐"
+        }
+    }
+}
+
+enum TranslationProcessingMode: String, CaseIterable, Identifiable {
+    case serial = "serial"
+    case parallel = "parallel"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .serial: return "직렬 처리 (번역만)"
+        case .parallel: return "병렬 처리 (전부 스트리밍)"
         }
     }
 }
@@ -186,6 +201,9 @@ final class AppSettings: ObservableObject {
     private let userDefaultsKey = "ReadIt_EnabledLanguages"
     private let menuBarKey = "ReadIt_IncludeMenuBar"
     private let hudStyleKey = "ReadIt_OverlayHUDStyle_v2"
+    private let processingModeKey = "ReadIt_TranslationProcessingMode_v1"
+    private let serialRunCountKey = "ReadIt_SerialRunCount_v1"
+    private let dismissedParallelTipKey = "ReadIt_DismissedParallelTip_v1"
     private let lastRegionKey = "ReadIt_LastRegionPreset_v1"
     private let regionPresetsKey = "ReadIt_RegionPresets_v1"
     private let recentCopiedKey = "ReadIt_RecentCopiedTexts_v1"
@@ -208,11 +226,61 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    /// 오버레이 상단 컨트롤 UI 스타일 (플로팅 캡슐 vs 노치 통합 HUD)
-    @Published var hudStyle: OverlayHUDStyle {
+    /// 오버레이 상단 컨트롤 UI 스타일 (플로팅 캡슐 코드는 유지하되, 설정은 노치 통합 HUD로 고정)
+    @Published var hudStyle: OverlayHUDStyle = .notch {
         didSet {
-            UserDefaults.standard.set(hudStyle.rawValue, forKey: hudStyleKey)
+            if hudStyle != .notch {
+                hudStyle = .notch
+            }
         }
+    }
+
+    /// 로그인 시 자동 실행 여부 (ServiceManagement 연동)
+    var isLaunchAtLoginEnabled: Bool {
+        get {
+            SMAppService.mainApp.status == .enabled
+        }
+        set {
+            do {
+                if newValue {
+                    if SMAppService.mainApp.status != .enabled {
+                        try SMAppService.mainApp.register()
+                    }
+                } else {
+                    if SMAppService.mainApp.status == .enabled {
+                        try SMAppService.mainApp.unregister()
+                    }
+                }
+            } catch {
+                // 시스템 오류 무시
+            }
+            objectWillChange.send()
+        }
+    }
+
+    /// 단발 번역(⌥1, ⌥2) 파이프라인 처리 방식 (기본: 직렬 처리 - 번역만 스트리밍)
+    @Published var processingMode: TranslationProcessingMode {
+        didSet {
+            UserDefaults.standard.set(processingMode.rawValue, forKey: processingModeKey)
+        }
+    }
+
+    /// 직렬 처리 누적 실행 횟수 (일정 횟수 이후 병렬 처리 [!TIP] 안내 표시용)
+    @Published var serialRunCount: Int {
+        didSet {
+            UserDefaults.standard.set(serialRunCount, forKey: serialRunCountKey)
+        }
+    }
+
+    /// 병렬 처리 [!TIP] 안내 배너 닫기 여부
+    @Published var hasDismissedParallelTip: Bool {
+        didSet {
+            UserDefaults.standard.set(hasDismissedParallelTip, forKey: dismissedParallelTipKey)
+        }
+    }
+
+    var shouldShowParallelTip: Bool {
+        processingMode == .serial && !hasDismissedParallelTip && serialRunCount >= 3
     }
 
     /// ⌥4 마지막 사용 구역 (프로세스 종료 후에도 유지)
@@ -257,13 +325,19 @@ final class AppSettings: ObservableObject {
             UserDefaults.standard.set(false, forKey: menuBarKey)
         }
 
-        if let rawStyle = UserDefaults.standard.string(forKey: hudStyleKey),
-           let savedStyle = OverlayHUDStyle(rawValue: rawStyle) {
-            self.hudStyle = savedStyle
+        self.hudStyle = .notch
+        UserDefaults.standard.set(OverlayHUDStyle.notch.rawValue, forKey: hudStyleKey)
+
+        if let rawMode = UserDefaults.standard.string(forKey: processingModeKey),
+           let savedMode = TranslationProcessingMode(rawValue: rawMode) {
+            self.processingMode = savedMode
         } else {
-            self.hudStyle = .notch
-            UserDefaults.standard.set(OverlayHUDStyle.notch.rawValue, forKey: hudStyleKey)
+            self.processingMode = .serial
+            UserDefaults.standard.set(TranslationProcessingMode.serial.rawValue, forKey: processingModeKey)
         }
+
+        self.serialRunCount = UserDefaults.standard.integer(forKey: serialRunCountKey)
+        self.hasDismissedParallelTip = UserDefaults.standard.bool(forKey: dismissedParallelTipKey)
 
         if let data = UserDefaults.standard.data(forKey: lastRegionKey),
            let decoded = try? JSONDecoder().decode(RegionPreset.self, from: data) {
@@ -364,6 +438,20 @@ final class AppSettings: ObservableObject {
             list = Array(list.prefix(Self.maxRecentCopiedTexts))
         }
         recentCopiedTexts = list
+    }
+
+    func recordSerialPipelineRun() {
+        guard processingMode == .serial else { return }
+        serialRunCount += 1
+    }
+
+    func dismissParallelTip() {
+        hasDismissedParallelTip = true
+    }
+
+    func enableParallelModeFromTip() {
+        processingMode = .parallel
+        hasDismissedParallelTip = true
     }
 
     func isEnabled(_ code: String, overrideLanguages: Set<String>? = nil) -> Bool {

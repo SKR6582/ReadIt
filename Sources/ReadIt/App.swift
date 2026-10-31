@@ -96,9 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         menu.addItem(.separator())
 
         // 3. 언어 팩 및 기본 환경설정
-        let packItem = NSMenuItem(title: "번역 언어 팩 설정…", action: #selector(openLanguagePacks), keyEquivalent: ",")
+        let packItem = NSMenuItem(title: "환경설정…", action: #selector(openSettings), keyEquivalent: ",")
         packItem.keyEquivalentModifierMask = [.command]
-        packItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        packItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         packItem.target = self
         menu.addItem(packItem)
 
@@ -236,12 +236,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
     }
 
     @objc private func openPermissionSettings() {
-        let screen = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-        if let url = URL(string: screen) { NSWorkspace.shared.open(url) }
+        SettingsWindowController.shared.show(tab: .permissions)
+    }
+
+    @objc private func openSettings() {
+        SettingsWindowController.shared.show(tab: .general)
     }
 
     @objc private func openLanguagePacks() {
-        LanguagePackWindowController.shared.show()
+        SettingsWindowController.shared.show(tab: .languages)
     }
 
     @objc private func toggleLoginItem() {
@@ -257,7 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         refreshMenuState()
     }
 
-    @objc private func checkForUpdates() {
+    @objc func checkForUpdates() {
         NSApp.activate()
         updaterController.checkForUpdates(nil)
     }
@@ -375,37 +378,190 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, SPUSta
         panel.present()
 
         do {
-            var lines = try await TextRecognizer.recognize(image: capture.image, canvasSize: model.canvasSize)
-            if Task.isCancelled { return }
+            let screenFrame = capture.screen.frame
+            let menuBarHeight: CGFloat = AppSettings.shared.includeMenuBar
+                ? 0
+                : max(24, screenFrame.maxY - capture.screen.visibleFrame.maxY)
+            let isVerticalOnly = (mode == .vertical)
+            let fullImage = capture.image
+            let scale = model.scale
 
-            // 메뉴 막대 번역에 포함하지 않는 경우, 화면 최상단 메뉴 막대 영역의 텍스트 제외
-            if !AppSettings.shared.includeMenuBar {
-                let menuBarHeight = max(24, capture.screen.frame.maxY - capture.screen.visibleFrame.maxY)
-                lines = lines.filter { line in
-                    line.rect.midY >= menuBarHeight
+            if AppSettings.shared.processingMode == .serial {
+                var lines = try await TextRecognizer.recognize(image: fullImage, canvasSize: model.canvasSize)
+                if Task.isCancelled { return }
+
+                if menuBarHeight > 0 {
+                    lines = lines.filter { $0.rect.midY >= menuBarHeight }
+                }
+
+                let blocks = BlockBuilder.build(from: lines, verticalOnly: isVerticalOnly).filter { block in
+                    guard let lang = block.language, lang != .korean else { return false }
+                    guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
+                    return AppSettings.shared.isEnabled(code)
+                }
+
+                let overlayBlocks = await Task.detached(priority: .userInitiated) {
+                    ColorSampler.makeOverlayBlocks(blocks, image: fullImage, scale: scale)
+                }.value
+                if Task.isCancelled { return }
+
+                AppSettings.shared.recordSerialPipelineRun()
+                if AppSettings.shared.shouldShowParallelTip {
+                    model.showParallelTipBanner = true
+                }
+
+                model.setBlocks(overlayBlocks)
+                guard !overlayBlocks.isEmpty else { return }
+
+                await TranslationCoordinator().translate(into: model)
+                return
+            }
+
+            let mouseGlobal = NSEvent.mouseLocation
+            let cursorPoint = CGPoint(
+                x: mouseGlobal.x - screenFrame.minX,
+                y: screenFrame.maxY - mouseGlobal.y
+            )
+
+            let axis: SmartTileSlicer.Axis = isVerticalOnly ? .vertical : .horizontal
+            let plan = SmartTileSlicer.makePlan(
+                image: fullImage,
+                canvasSize: model.canvasSize,
+                axis: axis,
+                tileCount: 4,
+                topInset: menuBarHeight,
+                cursorPoint: cursorPoint
+            )
+
+            let coordinator = TranslationCoordinator()
+            var translationTasks: [Task<(missing: [Locale.Language], failures: [String]), Never>] = []
+            var pendingLines: [RecognizedLine] = []
+            var emittedLines: [RecognizedLine] = []
+            var scannedTileIndices = Set<Int>()
+
+            for tile in plan.tiles {
+                if Task.isCancelled { return }
+                guard let tileImage = SmartTileSlicer.cropImage(fullImage, to: tile.expandedRect, scale: scale) else {
+                    scannedTileIndices.insert(tile.index)
+                    continue
+                }
+
+                let rawLines = try await TextRecognizer.recognize(
+                    image: tileImage,
+                    canvasSize: tile.expandedRect.size
+                )
+                if Task.isCancelled { return }
+
+                var offsetLines = rawLines.map { line in
+                    RecognizedLine(
+                        text: line.text,
+                        rect: line.rect.offsetBy(dx: tile.expandedRect.minX, dy: tile.expandedRect.minY),
+                        isVertical: line.isVertical
+                    )
+                }
+                if menuBarHeight > 0 {
+                    offsetLines = offsetLines.filter { $0.rect.midY >= menuBarHeight }
+                }
+
+                // 크롭 영역(expandedRect)의 인위적 절단선 끝(4pt 이내)에 걸려 잘린 불완전한 줄은 인접 타일 고유 영역에 온전히 존재하므로 제외
+                offsetLines = offsetLines.filter { line in
+                    switch axis {
+                    case .horizontal:
+                        if tile.hasLeadingCut,
+                           line.rect.minY <= tile.expandedRect.minY + 4,
+                           line.rect.maxY <= tile.coreRect.minY + 12 {
+                            return false
+                        }
+                        if tile.hasTrailingCut,
+                           line.rect.maxY >= tile.expandedRect.maxY - 4,
+                           line.rect.minY >= tile.coreRect.maxY - 12 {
+                            return false
+                        }
+                        return true
+                    case .vertical:
+                        if tile.hasLeadingCut,
+                           line.rect.minX <= tile.expandedRect.minX + 4,
+                           line.rect.maxX <= tile.coreRect.minX + 12 {
+                            return false
+                        }
+                        if tile.hasTrailingCut,
+                           line.rect.maxX >= tile.expandedRect.maxX - 4,
+                           line.rect.minX >= tile.coreRect.maxX - 12 {
+                            return false
+                        }
+                        return true
+                    }
+                }
+
+                SmartTileSlicer.mergeRecognizedLines(
+                    into: &pendingLines,
+                    newLines: offsetLines,
+                    emittedLines: emittedLines
+                )
+                scannedTileIndices.insert(tile.index)
+
+                let unsealedCuts = plan.internalCuts.compactMap { cut -> CGFloat? in
+                    let isSealed = scannedTileIndices.contains(cut.leadingTileIndex)
+                        && scannedTileIndices.contains(cut.trailingTileIndex)
+                    return isSealed ? nil : cut.position
+                }
+
+                let allCandidateBlocks = BlockBuilder.build(from: pendingLines, verticalOnly: isVerticalOnly)
+                var heldBlocks: [TextBlock] = []
+                var readyBlocks: [TextBlock] = []
+
+                for block in allCandidateBlocks {
+                    if SmartTileSlicer.touchesUnsealedCut(block: block, axis: axis, unsealedCuts: unsealedCuts) {
+                        heldBlocks.append(block)
+                    } else {
+                        readyBlocks.append(block)
+                    }
+                }
+
+                pendingLines = heldBlocks.flatMap(\.lines)
+                emittedLines.append(contentsOf: readyBlocks.flatMap(\.lines))
+
+                let filteredReadyBlocks = readyBlocks.filter { block in
+                    guard let lang = block.language, lang != .korean else { return false }
+                    guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
+                    return AppSettings.shared.isEnabled(code)
+                }
+
+                if filteredReadyBlocks.isEmpty { continue }
+
+                let overlayBlocks = await Task.detached(priority: .userInitiated) {
+                    ColorSampler.makeOverlayBlocks(filteredReadyBlocks, image: fullImage, scale: scale)
+                }.value
+                if Task.isCancelled { return }
+
+                let addedBlocks = model.appendStreamedBlocks(overlayBlocks)
+                if !addedBlocks.isEmpty {
+                    let task = Task { @MainActor in
+                        await coordinator.translateBlocks(addedBlocks, into: model)
+                    }
+                    translationTasks.append(task)
                 }
             }
 
-            // 모드에 따라 블록 생성 (vertical 모드는 세로쓰기 문단만 집중 번역)
-            let isVerticalOnly = (mode == .vertical)
-            let blocks = BlockBuilder.build(from: lines, verticalOnly: isVerticalOnly).filter { block in
-                guard let lang = block.language else { return false }
-                guard lang != .korean else { return false }
-                guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
-                return AppSettings.shared.isEnabled(code)
+            if model.blocks.isEmpty {
+                model.setBlocks([])
+                return
             }
 
-            let image = capture.image
-            let scale = model.scale
-            let overlayBlocks = await Task.detached(priority: .userInitiated) {
-                ColorSampler.makeOverlayBlocks(blocks, image: image, scale: scale)
-            }.value
+            var allMissing: [Locale.Language] = []
+            var allFailures: [String] = []
+            for task in translationTasks {
+                if Task.isCancelled { return }
+                let result = await task.value
+                for lang in result.missing where !allMissing.contains(where: { $0.minimalIdentifier == lang.minimalIdentifier }) {
+                    allMissing.append(lang)
+                }
+                allFailures.append(contentsOf: result.failures)
+            }
+
             if Task.isCancelled { return }
-
-            model.setBlocks(overlayBlocks)
-            guard !overlayBlocks.isEmpty else { return }
-
-            await TranslationCoordinator().translate(into: model)
+            model.missingLanguages = allMissing
+            model.finish(failures: allFailures)
         } catch {
             if Task.isCancelled { return }
             model.phase = .failed("텍스트 인식 실패: \(error.localizedDescription)")

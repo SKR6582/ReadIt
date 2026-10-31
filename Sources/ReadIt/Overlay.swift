@@ -58,6 +58,7 @@ final class OverlayModel: ObservableObject {
     @Published var missingLanguages: [Locale.Language] = []
     @Published var notice: String?
     @Published var scrollSpeedWarning: String?
+    @Published var showParallelTipBanner: Bool = false
     @Published var notchMetrics: NotchMetrics = .fallback
     @Published var isNotchExpanded: Bool = false
     @Published var isHoveringNotch: Bool = false
@@ -171,13 +172,69 @@ final class OverlayModel: ObservableObject {
     var translatedCount: Int { blocks.filter { $0.translated != nil }.count }
     var missingPackCount: Int { blocks.filter { $0.isMissingPack }.count }
 
+    /// 스크롤 중 움직이지 않는 상단 내비게이션/고정 사이드바 등의 블록 ID 집합
+    private var pinnedBlockIds: Set<Int> = []
+
     func setBlocks(_ newBlocks: [OverlayBlock]) {
         blocks = newBlocks
         anchorBlocks = newBlocks
+        pinnedBlockIds.removeAll(keepingCapacity: true)
         phase = newBlocks.isEmpty || newBlocks.allSatisfy({ $0.translated != nil }) ? .done : .translating
         if newBlocks.isEmpty && !isLiveMode && AppSettings.shared.hudStyle != .notch {
             flash("번역할 외국어 텍스트가 없어요")
         }
+    }
+
+    /// 타일 스트리밍 OCR 중 새로 인식된 블록들을 기존 블록 배열에 중복/ID 충돌 없이 추가하고, 실제 추가된 블록 목록을 반환한다.
+    @discardableResult
+    func appendStreamedBlocks(_ incoming: [OverlayBlock]) -> [OverlayBlock] {
+        guard !incoming.isEmpty else { return [] }
+        var usedIds = Set(blocks.map(\.id))
+        var added: [OverlayBlock] = []
+        added.reserveCapacity(incoming.count)
+        var supersededIds = Set<Int>()
+
+        for var candidate in incoming {
+            let candidateArea = max(1, candidate.rect.width * candidate.rect.height)
+            var isDuplicateOfLargerOrEqual = false
+
+            for existing in blocks where !supersededIds.contains(existing.id) {
+                let inter = existing.rect.intersection(candidate.rect)
+                guard !inter.isNull else { continue }
+                let existingArea = max(1, existing.rect.width * existing.rect.height)
+                let minArea = min(existingArea, candidateArea)
+                guard (inter.width * inter.height) / minArea >= 0.40 else { continue }
+
+                if candidateArea > existingArea * 1.35 {
+                    supersededIds.insert(existing.id)
+                } else {
+                    isDuplicateOfLargerOrEqual = true
+                    break
+                }
+            }
+
+            if isDuplicateOfLargerOrEqual { continue }
+
+            while usedIds.contains(candidate.id) {
+                candidate.id &+= 1
+            }
+            usedIds.insert(candidate.id)
+            added.append(candidate)
+        }
+
+        guard !added.isEmpty || !supersededIds.isEmpty else { return [] }
+        withAnimation(.easeOut(duration: 0.14)) {
+            if !supersededIds.isEmpty {
+                blocks.removeAll { supersededIds.contains($0.id) }
+                anchorBlocks.removeAll { supersededIds.contains($0.id) }
+            }
+            blocks.append(contentsOf: added)
+            anchorBlocks.append(contentsOf: added)
+            if phase == .recognizing {
+                phase = .translating
+            }
+        }
+        return added
     }
 
     func updateAnchors(_ newAnchors: [OverlayBlock]) {
@@ -187,12 +244,13 @@ final class OverlayModel: ObservableObject {
 
     /// 기존에 화면을 따라 이동한 블록들과 새로 OCR 인식된 블록들을 병합하여 깜빡임 없이 갱신한다.
     func mergeBlocks(_ incoming: [OverlayBlock]) {
-        guard !blocks.isEmpty else {
+        guard !blocks.isEmpty || !anchorBlocks.isEmpty else {
             setBlocks(incoming)
             return
         }
 
-        let existingBlocks = blocks
+        // 화면 밖으로 잠시 벗어나 visible 목록에 없더라도 기준 블록의 번역/ID는 재사용한다.
+        let existingBlocks = blocks.isEmpty ? anchorBlocks : blocks
         var usedExistingIndices = Set<Int>()
         var usedIds = Set<Int>()
         var merged = incoming
@@ -278,6 +336,7 @@ final class OverlayModel: ObservableObject {
 
         blocks = merged
         anchorBlocks = merged
+        pinnedBlockIds.removeAll(keepingCapacity: true)
         phase = merged.isEmpty || merged.allSatisfy({ $0.translated != nil }) ? .done : .translating
     }
 
@@ -306,10 +365,84 @@ final class OverlayModel: ObservableObject {
         mergeBlocks(combined)
     }
 
+    /// 스크롤 직후 새로 노출된 상·하단 영역의 OCR 결과를 캡처 시점 기준(capturedDelta)으로 기존 앵커 블록과 병합하고,
+    /// OCR 진행 중 추가로 발생한 잔여 스크롤(residualDelta)까지 즉시 반영한다.
+    @discardableResult
+    func rebaseAndMergeScrollStrip(
+        newStripBlocks: [OverlayBlock],
+        coreStripRect: CGRect,
+        capturedDelta: CGPoint,
+        residualDelta: CGPoint,
+        within windowRect: CGRect?,
+        pinnedIds: Set<Int>? = nil
+    ) -> [OverlayBlock] {
+        if let pinnedIds {
+            self.pinnedBlockIds = pinnedIds
+        }
+        let activePinnedIds = self.pinnedBlockIds
+        let screenBounds = CGRect(origin: .zero, size: canvasSize)
+        let clipBounds = (isRegionMode ? regionRect?.intersection(screenBounds) : nil) ?? screenBounds
+
+        var shiftedAnchors: [OverlayBlock] = []
+        shiftedAnchors.reserveCapacity(anchorBlocks.count)
+
+        for var block in anchorBlocks {
+            if activePinnedIds.contains(block.id) {
+                shiftedAnchors.append(block)
+                continue
+            }
+            if let winRect = windowRect, !winRect.intersects(block.rect) {
+                shiftedAnchors.append(block)
+                continue
+            }
+            block.rect = block.rect.offsetBy(dx: capturedDelta.x, dy: capturedDelta.y)
+            let visible = block.rect.intersection(clipBounds)
+            if !visible.isNull,
+               visible.height >= min(8, block.rect.height * 0.20),
+               visible.width >= min(8, block.rect.width * 0.20) {
+                shiftedAnchors.append(block)
+            }
+        }
+
+        let preserved = shiftedAnchors.filter { existing in
+            if activePinnedIds.contains(existing.id) {
+                return true
+            }
+            let inCoreStrip = existing.rect.midY >= coreStripRect.minY && existing.rect.midY <= coreStripRect.maxY
+            if inCoreStrip { return false }
+
+            let overlapsNew = newStripBlocks.contains { incoming in
+                let inter = existing.rect.intersection(incoming.rect)
+                guard !inter.isNull else { return false }
+                let minArea = max(1, min(existing.rect.width * existing.rect.height, incoming.rect.width * incoming.rect.height))
+                return (inter.width * inter.height) / minArea >= 0.40
+            }
+            return !overlapsNew
+        }
+
+        blocks = shiftedAnchors
+        anchorBlocks = shiftedAnchors
+        mergeBlocks(preserved + newStripBlocks)
+
+        if abs(residualDelta.x) > 0.1 || abs(residualDelta.y) > 0.1 {
+            _ = applyScrollOffset(cumulativeDelta: residualDelta, within: windowRect)
+        }
+
+        return anchorBlocks.filter { $0.translated == nil && !$0.isMissingPack }
+    }
+
     /// 기준 블록(anchorBlocks)에 누적 스크롤 오프셋을 적용하고 화면에 보이는 블록 수를 반환한다.
     @discardableResult
-    func applyScrollOffset(cumulativeDelta: CGPoint, within windowRect: CGRect?) -> Int {
+    func applyScrollOffset(
+        cumulativeDelta: CGPoint,
+        within windowRect: CGRect?,
+        pinnedIds: Set<Int>? = nil
+    ) -> Int {
         guard !anchorBlocks.isEmpty else { return 0 }
+        if let pinnedIds {
+            self.pinnedBlockIds = pinnedIds
+        }
+        let activePinnedIds = self.pinnedBlockIds
         let screenBounds = CGRect(origin: .zero, size: canvasSize)
         let clipBounds = (isRegionMode ? regionRect?.intersection(screenBounds) : nil) ?? screenBounds
 
@@ -318,6 +451,10 @@ final class OverlayModel: ObservableObject {
         var visibleInScrollArea = 0
 
         for var block in anchorBlocks {
+            if activePinnedIds.contains(block.id) {
+                updated.append(block)
+                continue
+            }
             if let winRect = windowRect, !winRect.intersects(block.rect) {
                 updated.append(block)
                 continue
@@ -393,18 +530,52 @@ final class OverlayModel: ObservableObject {
         }
     }
 
-    func finish(failures: [String]) {
-        anchorBlocks.removeAll { $0.translated == nil && !$0.isMissingPack }
+    /// 번역 배치 종료 처리.
+    /// targetIds가 주어지면 해당 배치에 포함된 블록만 정리하여, 번역 도중 스크롤 OCR로 새로 추가된 미번역 블록은 보존한다.
+    func finish(failures: [String], forBlockIds targetIds: Set<Int>? = nil) {
+        let shouldRemove: (OverlayBlock) -> Bool = { block in
+            guard block.translated == nil, !block.isMissingPack else { return false }
+            if let targetIds { return targetIds.contains(block.id) }
+            return true
+        }
+        anchorBlocks.removeAll(where: shouldRemove)
         // 번역되지 못했고 언어 팩 미설치 하이라이트 대상도 아닌 블록만 제거
         // 언어 팩이 없어 번역하지 못한 블록(isMissingPack == true)은 붉은색 하이라이트로 화면에 유지
         withAnimation(.easeOut(duration: 0.2)) {
-            blocks.removeAll { $0.translated == nil && !$0.isMissingPack }
+            blocks.removeAll(where: shouldRemove)
         }
-        if let first = failures.first, translatedCount == 0, missingPackCount == 0 {
+        let hasRemainingPending = anchorBlocks.contains { $0.translated == nil && !$0.isMissingPack }
+        if hasRemainingPending {
+            phase = .translating
+        } else if let first = failures.first, translatedCount == 0, missingPackCount == 0 {
             phase = .failed(first)
         } else {
             phase = .done
         }
+    }
+
+    /// 추적 기준을 잃었을 때 잘못된 위치의 오버레이가 남지 않도록 모든 블록을 즉시 비운다.
+    func clearForRealign() {
+        blocks = []
+        anchorBlocks = []
+        pinnedBlockIds.removeAll(keepingCapacity: true)
+        if phase != .recognizing {
+            phase = .done
+        }
+    }
+
+    /// 같은 창이 이동했을 때 현재 화면 위치의 블록을 창 이동량만큼 옮기고 이를 새 기준 좌표로 삼는다.
+    func shiftAllBlocks(by delta: CGPoint, within windowRect: CGRect? = nil) {
+        let moved = blocks.map { block -> OverlayBlock in
+            if let winRect = windowRect, !winRect.intersects(block.rect) {
+                return block
+            }
+            var copy = block
+            copy.rect = block.rect.offsetBy(dx: delta.x, dy: delta.y)
+            return copy
+        }
+        blocks = moved
+        anchorBlocks = moved
     }
 
     func copyAll() {

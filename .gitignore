@@ -11,3 +11,4 @@ DerivedData/
 *.pem
 *.key
 .env*
+.figma_renders/

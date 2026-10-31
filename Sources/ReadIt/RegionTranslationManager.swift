@@ -35,6 +35,18 @@ final class RegionTranslationManager {
     private let scrollTracker = ScrollTracker()
     private var lastBoundaryCheckTime: ContinuousClock.Instant = .now - .seconds(10)
 
+    /// 메인 루프가 캡처~OCR 병합을 진행 중인지 여부
+    private var isScanningFrame: Bool = false
+    /// 추적 기준이 갱신될 때마다 증가하는 세대 카운터
+    private var referenceGeneration: UInt64 = 0
+    /// 번역 요청 진행 중인 블록 ID 및 원문
+    private var inFlightTranslationBlockIds = Set<Int>()
+    private var inFlightSourceTexts: [Int: String] = [:]
+    /// 휠 추정치 또는 부분 OCR 후 정지 시 전체 OCR 재정렬 필요 여부
+    private var needsRealignScan: Bool = false
+    /// 경계 잠금 중 무시된 같은 방향 휠 누적량
+    private var clampedProbeDy: CGFloat = 0
+
     /// 구역 내부 가로 4분할 스트립 변화 감지 트래커 및 번역 캐시
     private let bandTracker = HorizontalBandTracker()
     private let scrollVelocityMonitor = ScrollVelocityMonitor()
@@ -119,7 +131,12 @@ final class RegionTranslationManager {
         self.wasTrackingScroll = false
         self.scrollGeneration = 0
         self.clampedScrollDirection = 0
+        self.clampedProbeDy = 0
         self.cumulativeScrollDelta = .zero
+        self.isScanningFrame = false
+        self.needsRealignScan = false
+        self.inFlightTranslationBlockIds.removeAll()
+        self.inFlightSourceTexts.removeAll()
         self.scrollTracker.reset()
 
         setupMonitors()
@@ -189,7 +206,12 @@ final class RegionTranslationManager {
         needsImmediateScan = false
         wasTrackingScroll = false
         clampedScrollDirection = 0
+        clampedProbeDy = 0
         cumulativeScrollDelta = .zero
+        isScanningFrame = false
+        needsRealignScan = false
+        inFlightTranslationBlockIds.removeAll()
+        inFlightSourceTexts.removeAll()
         scrollTracker.reset()
 
         onStateChanged?(false)
@@ -551,6 +573,7 @@ final class RegionTranslationManager {
         }
     }
 
+
     // MARK: - Scroll Tracking Inside Region (Live Mode)
 
     private func handleScrollEvent(_ event: NSEvent) {
@@ -580,7 +603,8 @@ final class RegionTranslationManager {
         }
 
         guard !model.anchorBlocks.isEmpty else {
-            scheduleSettleWait(milliseconds: 200)
+            isInteracting = false
+            needsImmediateScan = true
             return
         }
 
@@ -588,18 +612,21 @@ final class RegionTranslationManager {
             let scrollDir = dy > 0 ? 1 : -1
             if clampedScrollDirection != 0 {
                 if scrollDir == clampedScrollDirection {
-                    scheduleSettleWait(milliseconds: 160)
+                    clampedProbeDy += dy
+                    scheduleRegionBoundaryCheckIfNeeded(region: region, scrollDirection: scrollDir)
+                    scheduleSettleWait(milliseconds: 35)
                     return
                 } else {
                     clampedScrollDirection = 0
+                    clampedProbeDy = 0
                 }
             }
 
             cumulativeScrollDelta.x = 0
             cumulativeScrollDelta.y += dy
 
-            isInteracting = true
             wasTrackingScroll = true
+            needsRealignScan = true
             if !model.isTrackingScroll {
                 model.isTrackingScroll = true
             }
@@ -614,28 +641,32 @@ final class RegionTranslationManager {
                 scrollTracker.reset()
                 cumulativeScrollDelta = .zero
                 clampedScrollDirection = 0
+                clampedProbeDy = 0
                 wasTrackingScroll = false
                 model.isTrackingScroll = false
-                scheduleSettleWait(milliseconds: 180)
+                scheduleSettleWait(milliseconds: 45)
                 return
             }
 
             scheduleRegionBoundaryCheckIfNeeded(region: region, scrollDirection: scrollDir)
+
+            if abs(cumulativeScrollDelta.y) >= 12 {
+                isInteracting = false
+                needsImmediateScan = true
+            }
         }
 
-        if event.momentumPhase == .ended {
-            scheduleSettleWait(milliseconds: 150)
-        } else if event.phase == .ended {
-            scheduleSettleWait(milliseconds: 240)
+        if event.momentumPhase == .ended || event.phase == .ended {
+            scheduleSettleWait(milliseconds: 35)
         } else {
-            scheduleSettleWait(milliseconds: 210)
+            scheduleSettleWait(milliseconds: 45)
         }
     }
 
     private func scheduleRegionBoundaryCheckIfNeeded(region: CGRect, scrollDirection: Int) {
-        guard boundaryCheckTask == nil, scrollTracker.hasReference else { return }
+        guard boundaryCheckTask == nil, !isScanningFrame, scrollTracker.hasReference else { return }
         let now = ContinuousClock.now
-        guard now - lastBoundaryCheckTime >= .milliseconds(70) else { return }
+        guard now - lastBoundaryCheckTime >= .milliseconds(35) else { return }
         lastBoundaryCheckTime = now
 
         boundaryCheckTask = Task { @MainActor [weak self] in
@@ -643,15 +674,17 @@ final class RegionTranslationManager {
             guard let self, self.isRunning, let model = self.overlayModel else { return }
             guard model.isRegionLive, !model.anchorBlocks.isEmpty, self.scrollTracker.hasReference else { return }
 
-            try? await Task.sleep(for: .milliseconds(35))
-            guard !Task.isCancelled, self.isRunning else { return }
+            guard !Task.isCancelled, self.isRunning, !self.isScanningFrame else { return }
 
+            let referenceGenAtStart = self.referenceGeneration
+            let isProbingClamp = self.clampedScrollDirection != 0
             let dyAtCapture = self.cumulativeScrollDelta.y
-            guard abs(dyAtCapture) >= 3.0 else { return }
+            let predictedDy = dyAtCapture + (isProbingClamp ? self.clampedProbeDy : 0)
+            guard abs(predictedDy) >= 3.0 else { return }
 
             do {
                 let capture = try await ScreenCapturer.capture(screen: self.currentScreen)
-                guard !Task.isCancelled, self.isRunning else { return }
+                guard !Task.isCancelled, self.isRunning, !self.isScanningFrame, self.referenceGeneration == referenceGenAtStart else { return }
 
                 let regionContext = WindowTabContext(
                     windowID: 0,
@@ -662,18 +695,44 @@ final class RegionTranslationManager {
                 let checkResult = self.scrollTracker.checkScrollBoundary(
                     newImage: capture.image,
                     currentTabContext: regionContext,
-                    predictedCumulativeDy: dyAtCapture
+                    predictedCumulativeDy: predictedDy
                 )
 
-                if case .hitBoundary(let clampedCumulativeDy) = checkResult.state {
-                    self.clampedScrollDirection = scrollDirection
-                    self.cumulativeScrollDelta = CGPoint(x: 0, y: clampedCumulativeDy)
-                    withAnimation(.easeOut(duration: 0.08)) {
-                        _ = model.applyScrollOffset(
-                            cumulativeDelta: self.cumulativeScrollDelta,
-                            within: region
-                        )
+                switch checkResult.state {
+                case .movingNormally(let pinnedIds):
+                    if isProbingClamp {
+                        self.clampedScrollDirection = 0
+                        self.clampedProbeDy = 0
+                        self.cumulativeScrollDelta = CGPoint(x: 0, y: predictedDy)
+                        self.applyRegionTrackedOffset(model: model, region: region, pinnedIds: pinnedIds, animated: true)
+                    } else if !pinnedIds.isEmpty {
+                        self.applyRegionTrackedOffset(model: model, region: region, pinnedIds: pinnedIds, animated: false)
                     }
+
+                case .driftCorrected(let actualCumulativeDy, let pinnedIds):
+                    if isProbingClamp {
+                        let actualShiftInDir = (actualCumulativeDy - dyAtCapture) * CGFloat(scrollDirection)
+                        if actualShiftInDir >= 3.0 {
+                            self.clampedScrollDirection = 0
+                        }
+                        self.clampedProbeDy = 0
+                    }
+                    self.cumulativeScrollDelta = CGPoint(x: 0, y: actualCumulativeDy)
+                    self.applyRegionTrackedOffset(model: model, region: region, pinnedIds: pinnedIds, animated: true)
+
+                case .hitBoundary(let clampedCumulativeDy, let pinnedIds):
+                    self.clampedScrollDirection = scrollDirection
+                    self.clampedProbeDy = 0
+                    self.cumulativeScrollDelta = CGPoint(x: 0, y: clampedCumulativeDy)
+                    self.applyRegionTrackedOffset(model: model, region: region, pinnedIds: pinnedIds, animated: true)
+
+                case .targetLost:
+                    self.scrollTracker.reset()
+                    model.clearForRealign()
+                    self.cumulativeScrollDelta = .zero
+                    self.clampedScrollDirection = 0
+                    self.clampedProbeDy = 0
+                    self.needsImmediateScan = true
                 }
             } catch {
                 // 일시적 캡처 오류 무시
@@ -681,8 +740,25 @@ final class RegionTranslationManager {
         }
     }
 
+    private func applyRegionTrackedOffset(model: OverlayModel, region: CGRect, pinnedIds: Set<Int>?, animated: Bool) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.06)) {
+                _ = model.applyScrollOffset(
+                    cumulativeDelta: cumulativeScrollDelta,
+                    within: region,
+                    pinnedIds: pinnedIds
+                )
+            }
+        } else {
+            _ = model.applyScrollOffset(
+                cumulativeDelta: cumulativeScrollDelta,
+                within: region,
+                pinnedIds: pinnedIds
+            )
+        }
+    }
+
     private func scheduleSettleWait(milliseconds: Int) {
-        isInteracting = true
         settleTask?.cancel()
         settleTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(milliseconds))
@@ -784,20 +860,143 @@ final class RegionTranslationManager {
             else { break }
 
             if isInteracting {
-                try? await Task.sleep(for: .milliseconds(40))
+                try? await Task.sleep(for: .milliseconds(15))
                 continue
             }
             needsImmediateScan = false
 
             do {
-                let captureGen = scrollGeneration
+                isScanningFrame = true
+                defer { isScanningFrame = false }
+
                 let capture = try await ScreenCapturer.capture(screen: currentScreen)
                 if Task.isCancelled || !isRunning || !model.isRegionLive { break }
-                if isInteracting || scrollGeneration != captureGen { continue }
+
+                // 캡처 직후의 누적 스크롤 Y값을 읽어 캡처 시점의 기준선으로 삼는다
+                var capturedScrollDy = cumulativeScrollDelta.y
+                let hadScrollActivity = wasTrackingScroll || abs(capturedScrollDy) >= 10
 
                 currentScreen = capture.screen
                 let scale = CGFloat(capture.image.width) / max(1, model.canvasSize.width)
                 model.image = capture.image
+
+                if hadScrollActivity, !model.anchorBlocks.isEmpty {
+                    var detectedPinnedIds = Set<Int>()
+                    if scrollTracker.hasReference, abs(capturedScrollDy) >= 3.0 {
+                        let boundaryResult = scrollTracker.checkScrollBoundary(
+                            newImage: capture.image,
+                            currentTabContext: regionTabContext,
+                            predictedCumulativeDy: capturedScrollDy
+                        )
+                        switch boundaryResult.state {
+                        case .movingNormally(let pinnedIds):
+                            detectedPinnedIds = pinnedIds
+                        case .driftCorrected(let actualDy, let pinnedIds):
+                            let rawCaptured = capturedScrollDy
+                            capturedScrollDy = actualDy
+                            cumulativeScrollDelta.y += (actualDy - rawCaptured)
+                            detectedPinnedIds = pinnedIds
+                            needsRealignScan = true
+                        case .hitBoundary(let clampedDy, let pinnedIds):
+                            let rawCaptured = capturedScrollDy
+                            capturedScrollDy = clampedDy
+                            cumulativeScrollDelta.y += (clampedDy - rawCaptured)
+                            detectedPinnedIds = pinnedIds
+                            clampedScrollDirection = (capturedScrollDy >= 0 ? 1 : -1)
+                            needsRealignScan = true
+                        case .targetLost:
+                            scrollTracker.reset()
+                            model.clearForRealign()
+                            cumulativeScrollDelta = .zero
+                            capturedScrollDy = 0
+                        }
+                    }
+
+                    if abs(capturedScrollDy) >= 10,
+                       abs(capturedScrollDy) < region.height * 0.72,
+                       region.width > 40,
+                       region.height > 40 {
+                        let stripHeight = min(region.height, max(44, abs(capturedScrollDy) + 24))
+                        let coreStripRect: CGRect
+                        let expandedStripRect: CGRect
+
+                        if capturedScrollDy < 0 {
+                            let coreMinY = max(region.minY, region.maxY - stripHeight)
+                            coreStripRect = CGRect(x: region.minX, y: coreMinY, width: region.width, height: region.maxY - coreMinY)
+                            let expMinY = max(region.minY, coreMinY - 40)
+                            expandedStripRect = CGRect(x: region.minX, y: expMinY, width: region.width, height: region.maxY - expMinY)
+                        } else {
+                            let coreMaxY = min(region.maxY, region.minY + stripHeight)
+                            coreStripRect = CGRect(x: region.minX, y: region.minY, width: region.width, height: coreMaxY - region.minY)
+                            let expMaxY = min(region.maxY, coreMaxY + 40)
+                            expandedStripRect = CGRect(x: region.minX, y: region.minY, width: region.width, height: expMaxY - region.minY)
+                        }
+
+                        if let stripImage = cropImage(capture.image, to: expandedStripRect, scale: scale) {
+                            let rawLines = try await TextRecognizer.recognize(
+                                image: stripImage,
+                                canvasSize: expandedStripRect.size
+                            )
+                            if Task.isCancelled || !isRunning || !model.isRegionLive { break }
+
+                            let offsetLines = rawLines.map { line in
+                                RecognizedLine(
+                                    text: line.text,
+                                    rect: line.rect.offsetBy(dx: expandedStripRect.minX, dy: expandedStripRect.minY),
+                                    isVertical: line.isVertical
+                                )
+                            }
+
+                            let stripTextBlocks = BlockBuilder.build(from: offsetLines, verticalOnly: model.isRegionVerticalOnly).filter { block in
+                                guard block.rect.midY >= expandedStripRect.minY + 2,
+                                      block.rect.midY <= expandedStripRect.maxY - 2
+                                else { return false }
+                                guard let lang = block.language, lang != .korean else { return false }
+                                guard let code = AppSettings.nlLanguageToCode[lang] else { return false }
+                                return AppSettings.shared.isEnabled(code, overrideLanguages: model.overrideLanguages)
+                            }
+
+                            let fullImage = capture.image
+                            var stripOverlayBlocks = await Task.detached(priority: .userInitiated) {
+                                ColorSampler.makeOverlayBlocks(stripTextBlocks, image: fullImage, scale: scale)
+                            }.value
+                            if Task.isCancelled || !isRunning || !model.isRegionLive { break }
+
+                            for i in stripOverlayBlocks.indices {
+                                if let cached = cachedTranslation(for: stripOverlayBlocks[i].sourceText) {
+                                    stripOverlayBlocks[i].translated = cached
+                                }
+                            }
+
+                            let residualDy = cumulativeScrollDelta.y - capturedScrollDy
+                            cumulativeScrollDelta = CGPoint(x: 0, y: residualDy)
+                            wasTrackingScroll = abs(residualDy) >= 6
+
+                            let pendingBlocks = model.rebaseAndMergeScrollStrip(
+                                newStripBlocks: stripOverlayBlocks,
+                                coreStripRect: coreStripRect,
+                                capturedDelta: CGPoint(x: 0, y: capturedScrollDy),
+                                residualDelta: cumulativeScrollDelta,
+                                within: region,
+                                pinnedIds: detectedPinnedIds
+                            )
+
+                            lastSignature = model.anchorBlocks.map { "\($0.sourceText)_\(Int($0.rect.minX))_\(Int($0.rect.minY))" }.joined(separator: "|")
+                            scrollTracker.captureReference(
+                                image: capture.image,
+                                blocks: model.anchorBlocks,
+                                canvasSize: model.canvasSize,
+                                tabContext: regionTabContext
+                            )
+                            referenceGeneration &+= 1
+
+                            dispatchRegionTranslation(blocks: pendingBlocks, coordinator: coordinator, model: model)
+
+                            await waitNextCycle(milliseconds: 50)
+                            continue
+                        }
+                    }
+                }
 
                 guard let croppedImage = cropImage(capture.image, to: region, scale: scale) else {
                     await waitNextCycle(milliseconds: 350)
@@ -817,10 +1016,9 @@ final class RegionTranslationManager {
                     isRegionVisuallyChanged = false
                 } else {
                     isRegionVisuallyChanged = true
-                    clampedScrollDirection = 0
                 }
 
-                var forceFullScan = model.blocks.isEmpty || wasTrackingScroll
+                var forceFullScan = model.blocks.isEmpty || wasTrackingScroll || needsRealignScan
                 if !model.blocks.isEmpty {
                     if wasTrackingScroll {
                         if scrollTracker.hasReference {
@@ -829,37 +1027,69 @@ final class RegionTranslationManager {
                                 currentTabContext: regionTabContext,
                                 predictedCumulativeDy: cumulativeScrollDelta.y
                             )
-                            if case .hitBoundary(let clampedDy) = boundaryResult.state {
+                            switch boundaryResult.state {
+                            case .movingNormally(let pinnedIds):
+                                if !pinnedIds.isEmpty {
+                                    _ = model.applyScrollOffset(
+                                        cumulativeDelta: cumulativeScrollDelta,
+                                        within: region,
+                                        pinnedIds: pinnedIds
+                                    )
+                                }
+                            case .driftCorrected(let actualDy, let pinnedIds):
+                                cumulativeScrollDelta = CGPoint(x: 0, y: actualDy)
+                                withAnimation(.easeOut(duration: 0.06)) {
+                                    _ = model.applyScrollOffset(
+                                        cumulativeDelta: cumulativeScrollDelta,
+                                        within: region,
+                                        pinnedIds: pinnedIds
+                                    )
+                                }
+                            case .hitBoundary(let clampedDy, let pinnedIds):
+                                clampedScrollDirection = (cumulativeScrollDelta.y >= 0 ? 1 : -1)
                                 cumulativeScrollDelta = CGPoint(x: 0, y: clampedDy)
                                 withAnimation(.easeOut(duration: 0.08)) {
                                     _ = model.applyScrollOffset(
                                         cumulativeDelta: cumulativeScrollDelta,
-                                        within: region
+                                        within: region,
+                                        pinnedIds: pinnedIds
                                     )
                                 }
+                            case .targetLost:
+                                scrollTracker.reset()
+                                model.clearForRealign()
+                                cumulativeScrollDelta = .zero
                             }
                         }
                         wasTrackingScroll = false
                         forceFullScan = true
-                    } else if !isRegionVisuallyChanged {
-                        // 4개 가로 밴드 모두 변화가 없으면 OCR 생략 (CPU 절약 및 번역 고정 유지)
+                    } else if isRegionVisuallyChanged {
+                        if scrollTracker.hasReference {
+                            let trackResult = scrollTracker.verifyAndTrack(
+                                newImage: capture.image,
+                                currentTabContext: regionTabContext,
+                                predictedCumulativeDelta: .zero
+                            )
+                            if case .tracked(let trackedBlocks, let actualDelta) = trackResult.status {
+                                if abs(actualDelta.y) >= 3.0 {
+                                    forceFullScan = true
+                                    withAnimation(.easeOut(duration: 0.08)) {
+                                        model.blocks = trackedBlocks
+                                    }
+                                }
+                            } else if case .targetLost = trackResult.status {
+                                scrollTracker.reset()
+                                model.clearForRealign()
+                                cumulativeScrollDelta = .zero
+                                forceFullScan = true
+                            }
+                        } else {
+                            forceFullScan = true
+                        }
+                    } else if !forceFullScan {
+                        // 4개 가로 밴드 모두 변화가 없고 스크롤/재정렬도 없으면 OCR 생략
                         await waitNextCycle(milliseconds: 320)
                         continue
-                    } else if scrollTracker.hasReference {
-                        // 새로운 채팅 줄이 올라오며 기존 텍스트가 위로 밀려 올라간 경우 위치 추적 반영
-                        let trackResult = scrollTracker.verifyAndTrack(
-                            newImage: capture.image,
-                            currentTabContext: regionTabContext,
-                            predictedCumulativeDelta: .zero
-                        )
-                        if case .tracked(let trackedBlocks, let actualDelta) = trackResult.status {
-                            if abs(actualDelta.y) >= 3.0 {
-                                forceFullScan = true
-                                withAnimation(.easeOut(duration: 0.08)) {
-                                    model.blocks = trackedBlocks
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -876,7 +1106,6 @@ final class RegionTranslationManager {
                             canvasSize: range.expandedRect.size
                         )
                         if Task.isCancelled || !isRunning || !model.isRegionLive { break }
-                        if isInteracting || scrollGeneration != captureGen { break }
 
                         let offsetLines = rawLines.map { line in
                             RecognizedLine(
@@ -898,14 +1127,12 @@ final class RegionTranslationManager {
                     }
 
                     if Task.isCancelled || !isRunning || !model.isRegionLive { break }
-                    if isInteracting || scrollGeneration != captureGen { continue }
 
                     let fullImage = capture.image
                     var partialOverlayBlocks = await Task.detached(priority: .userInitiated) {
                         ColorSampler.makeOverlayBlocks(partialTextBlocks, image: fullImage, scale: scale)
                     }.value
                     if Task.isCancelled || !isRunning || !model.isRegionLive { break }
-                    if isInteracting || scrollGeneration != captureGen { continue }
 
                     for i in partialOverlayBlocks.indices {
                         if let cached = cachedTranslation(for: partialOverlayBlocks[i].sourceText) {
@@ -913,24 +1140,30 @@ final class RegionTranslationManager {
                         }
                     }
 
-                    if !isInteracting && scrollGeneration == captureGen {
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            model.mergePartialBands(newBandBlocks: partialOverlayBlocks, dirtyRanges: dirtyRanges)
-                        }
-                        lastSignature = model.blocks.map { "\($0.sourceText)_\(Int($0.rect.minX))_\(Int($0.rect.minY))" }.joined(separator: "|")
-                        cumulativeScrollDelta = .zero
-                        scrollTracker.captureReference(
-                            image: capture.image,
-                            blocks: model.anchorBlocks,
-                            canvasSize: model.canvasSize,
-                            tabContext: regionTabContext
-                        )
+                    let residualDy = cumulativeScrollDelta.y - capturedScrollDy
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        model.mergePartialBands(newBandBlocks: partialOverlayBlocks, dirtyRanges: dirtyRanges)
                     }
+                    lastSignature = model.blocks.map { "\($0.sourceText)_\(Int($0.rect.minX))_\(Int($0.rect.minY))" }.joined(separator: "|")
+                    scrollTracker.captureReference(
+                        image: capture.image,
+                        blocks: model.anchorBlocks,
+                        canvasSize: model.canvasSize,
+                        tabContext: regionTabContext
+                    )
+                    referenceGeneration &+= 1
+
+                    cumulativeScrollDelta = CGPoint(x: 0, y: residualDy)
+                    wasTrackingScroll = abs(residualDy) >= 6
+                    if abs(residualDy) > 0.5 {
+                        model.applyScrollOffset(cumulativeDelta: cumulativeScrollDelta, within: region)
+                    }
+
+                    dispatchRegionTranslation(blocks: model.anchorBlocks, coordinator: coordinator, model: model)
                 } else {
                     // 구역 전체 OCR 수행
                     let rawLines = try await TextRecognizer.recognize(image: croppedImage, canvasSize: region.size)
                     if Task.isCancelled || !isRunning || !model.isRegionLive { break }
-                    if isInteracting || scrollGeneration != captureGen { continue }
 
                     let lines = rawLines.map { line in
                         RecognizedLine(
@@ -947,11 +1180,12 @@ final class RegionTranslationManager {
                     }
 
                     let currentSignature = blocks.map { "\($0.text)_\(Int($0.rect.minX))_\(Int($0.rect.minY))" }.joined(separator: "|")
-                    if currentSignature == lastSignature && !blocks.isEmpty && !model.blocks.isEmpty {
-                        if abs(cumulativeScrollDelta.y) > 0.5 {
-                            cumulativeScrollDelta = .zero
+                    if currentSignature == lastSignature && !blocks.isEmpty && !model.blocks.isEmpty && !needsRealignScan {
+                        let residualDy = cumulativeScrollDelta.y - capturedScrollDy
+                        cumulativeScrollDelta = CGPoint(x: 0, y: residualDy)
+                        if abs(residualDy) > 0.5 {
                             withAnimation(.easeOut(duration: 0.08)) {
-                                _ = model.applyScrollOffset(cumulativeDelta: .zero, within: region)
+                                _ = model.applyScrollOffset(cumulativeDelta: cumulativeScrollDelta, within: region)
                             }
                         }
                         await waitNextCycle(milliseconds: 350)
@@ -974,7 +1208,6 @@ final class RegionTranslationManager {
                         ColorSampler.makeOverlayBlocks(blocks, image: fullImage, scale: scale)
                     }.value
                     if Task.isCancelled || !isRunning || !model.isRegionLive { break }
-                    if isInteracting || scrollGeneration != captureGen { continue }
 
                     for i in overlayBlocks.indices {
                         if let cached = cachedTranslation(for: overlayBlocks[i].sourceText) {
@@ -982,44 +1215,85 @@ final class RegionTranslationManager {
                         }
                     }
 
-                    if !isInteracting && scrollGeneration == captureGen {
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            model.mergeBlocks(overlayBlocks)
-                        }
-                        cumulativeScrollDelta = .zero
-                        scrollTracker.captureReference(
-                            image: capture.image,
-                            blocks: model.anchorBlocks,
-                            canvasSize: model.canvasSize,
-                            tabContext: regionTabContext
-                        )
+                    let residualDy = cumulativeScrollDelta.y - capturedScrollDy
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        model.mergeBlocks(overlayBlocks)
                     }
-                }
+                    needsRealignScan = false
 
-                let needsTranslation = model.blocks.contains { $0.translated == nil && !$0.isMissingPack }
-                if needsTranslation && !isInteracting && scrollGeneration == captureGen {
-                    await coordinator.translate(into: model)
-                    if Task.isCancelled || !isRunning || !model.isRegionLive { break }
+                    scrollTracker.captureReference(
+                        image: capture.image,
+                        blocks: model.anchorBlocks,
+                        canvasSize: model.canvasSize,
+                        tabContext: regionTabContext
+                    )
+                    referenceGeneration &+= 1
 
-                    for block in model.anchorBlocks {
-                        if let translated = block.translated {
-                            storeTranslation(translated, for: block.sourceText)
-                        }
+                    cumulativeScrollDelta = CGPoint(x: 0, y: residualDy)
+                    wasTrackingScroll = abs(residualDy) >= 6
+                    if abs(residualDy) > 0.5 {
+                        model.applyScrollOffset(cumulativeDelta: cumulativeScrollDelta, within: region)
                     }
 
-                    if !isInteracting && scrollGeneration == captureGen {
-                        scrollTracker.updateReferenceBlocks(model.anchorBlocks)
-                    }
+                    dispatchRegionTranslation(blocks: model.anchorBlocks, coordinator: coordinator, model: model)
                 }
             } catch {
                 // 캡처 오류 시 다음 주기에 재시도
             }
 
-            await waitNextCycle(milliseconds: 350)
+            await waitNextCycle(milliseconds: 300)
         }
     }
 
-    // MARK: - Helpers
+    private func dispatchRegionTranslation(
+        blocks: [OverlayBlock],
+        coordinator: TranslationCoordinator,
+        model: OverlayModel
+    ) {
+        let pending = blocks.filter { block in
+            block.translated == nil &&
+            !block.isMissingPack &&
+            !inFlightTranslationBlockIds.contains(block.id)
+        }
+        guard !pending.isEmpty else { return }
+
+        for b in pending {
+            inFlightTranslationBlockIds.insert(b.id)
+            inFlightSourceTexts[b.id] = b.sourceText
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self, self.isRunning else { return }
+            defer {
+                for b in pending {
+                    self.inFlightTranslationBlockIds.remove(b.id)
+                    self.inFlightSourceTexts.removeValue(forKey: b.id)
+                }
+            }
+
+            coordinator.onResponse = { [weak self] blockId, translated in
+                guard let self else { return }
+                if let source = self.inFlightSourceTexts[blockId] {
+                    self.storeTranslation(translated, for: source)
+                }
+            }
+
+            let (_, _) = await coordinator.translateBlocks(pending, into: model)
+            guard !Task.isCancelled, self.isRunning else { return }
+
+            for block in model.anchorBlocks {
+                if let translated = block.translated {
+                    self.storeTranslation(translated, for: block.sourceText)
+                }
+            }
+            if abs(self.cumulativeScrollDelta.y) < 1.0 {
+                self.scrollTracker.updateReferenceBlocks(model.anchorBlocks)
+            }
+        }
+    }
+
+
+        // MARK: - Helpers
 
     private func cropImage(_ image: CGImage, to region: CGRect, scale: CGFloat) -> CGImage? {
         let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
@@ -1055,10 +1329,10 @@ final class RegionTranslationManager {
     }
 
     private func waitNextCycle(milliseconds: Int) async {
-        let step = 40
+        let step = 15
         var elapsed = 0
         while elapsed < milliseconds && !Task.isCancelled && isRunning {
-            if needsImmediateScan && !isInteracting {
+            if (needsImmediateScan || abs(cumulativeScrollDelta.y) >= 12) && !isInteracting {
                 needsImmediateScan = false
                 return
             }

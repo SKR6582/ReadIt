@@ -679,10 +679,17 @@ struct OverlayView: View {
                 missingLanguageBanner
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
+
+            // 병렬 처리(전체 스트리밍) [!TIP] 안내 배너
+            if model.showParallelTipBanner && settings.processingMode == .serial && !settings.hasDismissedParallelTip {
+                parallelStreamingTipBanner
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.phase)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.missingLanguages)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.showOriginal)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.showParallelTipBanner)
     }
 
     // MARK: - Status Helpers (간결하고 직관적인 문구)
@@ -799,6 +806,71 @@ struct OverlayView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(Color.red.opacity(0.3), lineWidth: 1.0)
+                )
+        )
+    }
+
+    private var parallelStreamingTipBanner: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text("TIP")
+                    .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+            }
+            .foregroundStyle(Color.green)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(Color.green.opacity(0.16)))
+
+            Text("마우스 커서 주변부터 OCR과 번역을 동시에 띄우려면 '병렬 처리'를 켜보세요")
+                .font(.system(size: 11.5, weight: .medium))
+
+            Button {
+                settings.enableParallelModeFromTip()
+                model.showParallelTipBanner = false
+                model.flash("병렬 처리(전부 스트리밍) 모드로 전환했어요")
+            } label: {
+                Text("병렬 처리 켜기")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.green, in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                settings.dismissParallelTip()
+                model.showParallelTipBanner = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+            .help("다시 보지 않기")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(AppleTheme.systemGlass)
+                .shadow(color: Color.black.opacity(0.14), radius: 10, y: 4)
+                .overlay(alignment: .leading) {
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 12,
+                        bottomLeadingRadius: 12,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: 0
+                    )
+                    .fill(Color.green)
+                    .frame(width: 3.5)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.green.opacity(0.32), lineWidth: 0.9)
                 )
         )
     }
@@ -1420,6 +1492,7 @@ private struct NotchHUDView: View {
             || model.scrollSpeedWarning != nil
             || model.notice != nil
             || !model.missingLanguages.isEmpty
+            || (model.showParallelTipBanner && settings.processingMode == .serial && !settings.hasDismissedParallelTip)
             || (model.isRegionMode && showPresetBar)
             || (showRecentCopyBar && !settings.recentCopiedTexts.isEmpty)
     }
@@ -1526,6 +1599,64 @@ private struct NotchHUDView: View {
                         .overlay(
                             Capsule()
                                 .strokeBorder(Color.orange.opacity(0.28), lineWidth: 0.5)
+                        )
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+            }
+
+            if model.showParallelTipBanner && settings.processingMode == .serial && !settings.hasDismissedParallelTip {
+                HStack(spacing: 8) {
+                    HStack(spacing: 3.5) {
+                        Image(systemName: "lightbulb.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("TIP")
+                            .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                    }
+                    .foregroundStyle(Color.green)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.green.opacity(0.18)))
+
+                    Text("첫 번역 표시를 더 빠르게 보려면 '병렬 처리(전부 스트리밍)'를 켜보세요")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.88))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+
+                    Button {
+                        settings.enableParallelModeFromTip()
+                        model.showParallelTipBanner = false
+                        model.flash("병렬 처리(전부 스트리밍) 모드로 전환했어요")
+                    } label: {
+                        Text("병렬 처리 켜기")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.green.opacity(0.65)))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        settings.dismissParallelTip()
+                        model.showParallelTipBanner = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(Color.white.opacity(0.55))
+                            .padding(3)
+                    }
+                    .buttonStyle(.plain)
+                    .help("다시 보지 않기")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.07))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.green.opacity(0.32), lineWidth: 0.6)
                         )
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
